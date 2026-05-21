@@ -1,0 +1,49 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@import "tailwindcss";
+:root {
+  --ink-900: #0a0b0f;
+  --ink-800: #1a1c26;
+  --ink-700: #2e3147;
+  --ink-600: #4a4e6b;
+  --ink-400: #7c82a3;
+  --ink-200: #bcc0d6;
+  --ink-100: #e2e4ef;
+  --ink-50: #f4f5fa;
+
+  --saffron-500: #f97316;
+  --saffron-400: #fb923c;
+  --saffron-300: #fed7aa;
+  --saffron-100: #fff7ed;
+
+  --jade-500: #059669;
+  --jade-400: #34d399;
+  --jade-100: #ecfdf5;
+
+  --crimson-500: #e11d48;
+  --crimson-100: #fff1f2;
+
+  --cobalt-600: #2563eb;
+  --cobalt-500: #3b82f6;
+  --cobalt-100: #eff6ff;
+
+  --amethyst-600: #7c3aed;
+  --amethyst-100: #f5f3ff;
+
+  --surface: #ffffff;
+  --page: #f4f5fa;
+  --font-serif: "DM Serif Display", Georgia, serif;
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--page);
+  font-family: var(--font-sans);
+  color: var(--ink-900);
+  -webkit-font-smoothing: antialiased;
+}
