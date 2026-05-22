@@ -11,6 +11,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 import { transcribeAudio } from "../pipeline/stt.js";
 import { getLLMReply } from "../pipeline/llm.js";
 import { synthesizeSpeech } from "../pipeline/tts.js";
@@ -26,6 +27,7 @@ const PIPELINE_TIMEOUT_MS = 1500; // play thinking chime if pipeline > this
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { realtime: { transport: ws } },
 );
 
 export function handleCall(ws, req) {
