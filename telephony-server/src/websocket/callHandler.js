@@ -296,6 +296,7 @@ export function handleCall(ws, req) {
     await updateCallLog(supabase, callLogId, {
       status: reason === "callended" ? "completed" : reason,
       duration,
+      transcript: history.length ? history : null,
     });
     console.log(`[call] ended reason=${reason} duration=${duration}s`);
   }

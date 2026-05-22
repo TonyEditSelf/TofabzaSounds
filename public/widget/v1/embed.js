@@ -17,7 +17,7 @@
   "use strict";
 
   const WIDGET_ID = window.TofabzaWidgetId;
-  const BASE_URL = "http://localhost:3000";
+  const BASE_URL = window.__TOFABZA_BASE_URL__ ?? "http://localhost:3000";
 
   if (!WIDGET_ID) {
     console.error("[Tofabza] TofabzaWidgetId is not set.");
@@ -97,7 +97,7 @@
           right: 24px;
           width: 360px;
           max-height: 520px;
-          background: #fff;
+          background: var(--widget-bg, #fff);
           border-radius: 16px;
           box-shadow: 0 8px 40px rgba(0,0,0,0.15);
           display: none;
@@ -153,8 +153,8 @@
         }
         .msg.assistant {
           align-self: flex-start;
-          background: #F3F4F6;
-          color: #111;
+          background: var(--msg-bg, #F3F4F6);
+          color: var(--msg-color, #111);
           border-radius: 12px 12px 12px 0;
         }
         .msg.error {
@@ -219,6 +219,35 @@
 
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 
+        #bar-strip {
+          position: fixed;
+          bottom: 0; left: 0; right: 0;
+          background: var(--accent, #2563EB);
+          color: #fff;
+          display: flex;
+          align-items: center;
+          padding: 0 16px;
+          height: 52px;
+          z-index: 2147483647;
+          cursor: pointer;
+          gap: 10px;
+        }
+        #bar-strip span { font-size: 0.9rem; font-weight: 600; flex: 1; }
+        #bar-strip-toggle { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+
+        #bar-window {
+          position: fixed;
+          bottom: 52px; left: 0; right: 0;
+          height: 420px;
+          background: var(--widget-bg, #fff);
+          box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+          display: none;
+          flex-direction: column;
+          z-index: 2147483646;
+          overflow: hidden;
+        }
+        #bar-window.open { display: flex; }
+
         @media (max-width: 480px) {
           #window {
             right: 8px;
@@ -228,6 +257,30 @@
           }
         }
       </style>
+
+      <!-- Bar strip (shown only in bar mode) -->
+      <div id="bar-strip" style="display:none">
+        <span id="bar-name">Assistant</span>
+        <button id="bar-strip-toggle" aria-label="Toggle chat">💬</button>
+      </div>
+
+      <!-- Bar window -->
+      <div id="bar-window" role="dialog" aria-label="Chat assistant">
+        <div id="bar-header" style="background:var(--accent,#2563EB);padding:10px 16px;color:#fff;font-weight:600;font-size:0.84rem;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+          <span id="bar-widget-name">Assistant</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="bar-call-timer" style="font-family:monospace;font-size:0.78rem;display:none">00:00</span>
+            <button id="bar-end-call-btn" style="display:none;background:#E11D48;color:#fff;border:none;border-radius:20px;padding:4px 12px;font-size:0.78rem;cursor:pointer">End Call</button>
+            <button id="bar-close-btn" style="background:none;border:none;color:rgba(255,255,255,0.8);cursor:pointer;font-size:16px">✕</button>
+          </div>
+        </div>
+        <div id="bar-messages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px"></div>
+        <div id="bar-input-bar" style="border-top:1px solid #E5E7EB;padding:10px 12px;display:flex;gap:8px;align-items:center;flex-shrink:0">
+          <input id="bar-text-input" type="text" placeholder="Type a message…" maxlength="500" style="flex:1;border:1px solid #E5E7EB;border-radius:20px;padding:8px 14px;font-size:0.84rem;outline:none;font-family:system-ui,sans-serif" />
+          <button id="bar-send-btn" style="width:36px;height:36px;border-radius:50%;border:none;background:var(--accent,#2563EB);color:#fff;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0">➤</button>
+          <button id="bar-mic-btn" style="width:36px;height:36px;border-radius:50%;border:none;background:#F3F4F6;color:#374151;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0">🎤</button>
+        </div>
+      </div>
 
       <!-- Bubble button -->
       <button id="bubble" aria-label="Open chat">💬</button>
@@ -258,7 +311,8 @@
   // ── DOM helpers ───────────────────────────────────────────────────────────────
 
   function addMessage(shadow, role, text) {
-    const msgs = shadow.getElementById("messages");
+    const isBar = widgetConfig?.style === "bar";
+    const msgs = shadow.getElementById(isBar ? "bar-messages" : "messages");
     const div = document.createElement("div");
     div.className = `msg ${role}`;
     div.textContent = text;
@@ -268,7 +322,8 @@
   }
 
   function showTyping(shadow) {
-    const msgs = shadow.getElementById("messages");
+    const isBar = widgetConfig?.style === "bar";
+    const msgs = shadow.getElementById(isBar ? "bar-messages" : "messages");
     const div = document.createElement("div");
     div.className = "typing";
     div.id = "typing-indicator";
@@ -282,8 +337,11 @@
   }
 
   function setLoading(shadow, loading) {
-    const sendBtn = shadow.getElementById("send-btn");
-    const input = shadow.getElementById("text-input");
+    const isBar = widgetConfig?.style === "bar";
+    const sendBtn = shadow.getElementById(isBar ? "bar-send-btn" : "send-btn");
+    const input = shadow.getElementById(
+      isBar ? "bar-text-input" : "text-input",
+    );
     sendBtn.disabled = loading;
     input.disabled = loading;
   }
@@ -403,8 +461,9 @@
       currentTTSSource = null;
     }
     hideCallBar(shadow);
-    shadow.getElementById("mic-btn").textContent = "🎤";
-    shadow.getElementById("mic-btn").classList.remove("recording");
+    const isBar = widgetConfig?.style === "bar";
+    shadow.getElementById(isBar ? "bar-mic-btn" : "mic-btn").textContent = "🎤";
+    if (!isBar) shadow.getElementById("mic-btn").classList.remove("recording");
     addMessage(shadow, "assistant", "Call ended.");
   }
 
@@ -449,8 +508,10 @@
     let vadRunning = true;
 
     // Update mic indicator
-    shadow.getElementById("mic-btn").classList.add("recording");
-    shadow.getElementById("mic-btn").textContent = "🎤";
+    const _isBar = widgetConfig?.style === "bar";
+    if (!_isBar) shadow.getElementById("mic-btn").classList.add("recording");
+    shadow.getElementById(_isBar ? "bar-mic-btn" : "mic-btn").textContent =
+      "🎤";
 
     function checkVAD() {
       if (!vadRunning || !callActive) return;
@@ -602,6 +663,58 @@
 
   async function playTTSAndWait(text, language, speaker) {
     return new Promise(async (resolve) => {
+      let monitorStream = null;
+      let monitorCtx = null;
+      let bargeInDetected = false;
+
+      function stopMonitor() {
+        monitorStream?.getTracks().forEach((t) => t.stop());
+        monitorStream = null;
+      }
+
+      async function startBargeInMonitor(source) {
+        try {
+          monitorStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+          });
+          if (!audioCtx)
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === "suspended") await audioCtx.resume();
+
+          const monSrc = audioCtx.createMediaStreamSource(monitorStream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 512;
+          monSrc.connect(analyser);
+          const dataArr = new Uint8Array(analyser.frequencyBinCount);
+
+          function checkBarge() {
+            if (bargeInDetected || !currentTTSSource) return;
+            analyser.getByteTimeDomainData(dataArr);
+            let sum = 0;
+            for (let i = 0; i < dataArr.length; i++) {
+              const v = (dataArr[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / dataArr.length) * 100;
+            if (rms > VAD_SILENCE_THRESHOLD * 1.8) {
+              // User started speaking — kill TTS
+              bargeInDetected = true;
+              stopMonitor();
+              try {
+                source.stop();
+              } catch (_) {}
+              currentTTSSource = null;
+              resolve();
+              return;
+            }
+            requestAnimationFrame(checkBarge);
+          }
+          requestAnimationFrame(checkBarge);
+        } catch (_) {
+          // Monitor failed — non-fatal, TTS plays normally
+        }
+      }
+
       try {
         const res = await fetch(`${BASE_URL}/api/tts`, {
           method: "POST",
@@ -623,17 +736,22 @@
         source.buffer = audioBuffer;
         source.connect(audioCtx.destination);
         currentTTSSource = source;
-        source.onended = () => {
-          currentTTSSource = null;
-          resolve();
-        };
-        // If call ended during TTS, resolve immediately
+
         if (!callActive) {
           resolve();
           return;
         }
+
+        source.onended = () => {
+          stopMonitor();
+          currentTTSSource = null;
+          if (!bargeInDetected) resolve();
+        };
+
         source.start();
+        startBargeInMonitor(source); // non-blocking — runs in parallel
       } catch {
+        stopMonitor();
         resolve();
       }
     });
@@ -692,13 +810,99 @@
       if (wRes.ok) {
         widgetConfig = await wRes.json();
         const accent = widgetConfig?.accentColor ?? "#2563EB";
+        const bg = widgetConfig?.darkMode
+          ? "#1a1a1a"
+          : (widgetConfig?.bgColor ?? "#ffffff");
+        const msgBg = widgetConfig?.darkMode ? "#2a2a2a" : "#F3F4F6";
+        const msgColor = widgetConfig?.darkMode ? "#f0f0f0" : "#111";
         shadow.host.style.setProperty("--accent", accent);
+        shadow.host.style.setProperty("--widget-bg", bg);
+        shadow.host.style.setProperty("--msg-bg", msgBg);
+        shadow.host.style.setProperty("--msg-color", msgColor);
         shadow.getElementById("widget-name").textContent =
           widgetConfig?.name ?? "Assistant";
 
         // Greeting shown when call starts — not here
       }
     } catch (_) {}
+
+    // ── Bar mode setup ──
+    const isBar = widgetConfig?.style === "bar";
+    if (isBar) {
+      shadow.getElementById("bubble").style.display = "none";
+      const barStrip = shadow.getElementById("bar-strip");
+      barStrip.style.display = "flex";
+      shadow.getElementById("bar-name").textContent =
+        widgetConfig?.name ?? "Assistant";
+      shadow.getElementById("bar-widget-name").textContent =
+        widgetConfig?.name ?? "Assistant";
+
+      const barWin = shadow.getElementById("bar-window");
+      const barInput = shadow.getElementById("bar-text-input");
+      const barSend = shadow.getElementById("bar-send-btn");
+      const barMic = shadow.getElementById("bar-mic-btn");
+
+      // Proxy addMessage / showTyping / hideTyping / setLoading to bar-messages
+      const _addMsg = addMessage;
+      const origAddMessage = (s, role, text) => {
+        const msgs =
+          s.getElementById("bar-messages") ?? s.getElementById("messages");
+        const div = document.createElement("div");
+        div.className = `msg ${role}`;
+        div.textContent = text;
+        div.style.cssText =
+          role === "user"
+            ? "align-self:flex-end;background:var(--accent,#2563EB);color:#fff;padding:10px 14px;border-radius:12px 12px 0 12px;max-width:80%;font-size:0.84rem;word-break:break-word"
+            : role === "error"
+              ? "align-self:flex-start;background:#FEE2E2;color:#B91C1C;padding:10px 14px;border-radius:12px;max-width:80%;font-size:0.78rem"
+              : "align-self:flex-start;background:#F3F4F6;color:#111;padding:10px 14px;border-radius:12px 12px 12px 0;max-width:80%;font-size:0.84rem;word-break:break-word";
+        msgs.appendChild(div);
+        msgs.scrollTop = msgs.scrollHeight;
+        return div;
+      };
+
+      shadow._barAddMessage = origAddMessage;
+
+      shadow.getElementById("bar-strip").addEventListener("click", () => {
+        const open = barWin.classList.toggle("open");
+        shadow.getElementById("bar-strip-toggle").textContent = open
+          ? "✕"
+          : "💬";
+        if (open) {
+          barInput.focus();
+          if (!audioCtx)
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioCtx.state === "suspended") audioCtx.resume();
+        }
+      });
+      shadow.getElementById("bar-close-btn").addEventListener("click", () => {
+        barWin.classList.remove("open");
+        shadow.getElementById("bar-strip-toggle").textContent = "💬";
+      });
+
+      barSend.addEventListener("click", async () => {
+        if (callActive) return;
+        const text = barInput.value.trim();
+        barInput.value = "";
+        await sendMessage(shadow, text);
+      });
+      barInput.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          if (callActive) return;
+          const text = barInput.value.trim();
+          barInput.value = "";
+          await sendMessage(shadow, text);
+        }
+      });
+      barMic.addEventListener("click", () => {
+        if (!callActive) startCall(shadow);
+        else endCall(shadow);
+      });
+      shadow
+        .getElementById("bar-end-call-btn")
+        .addEventListener("click", () => endCall(shadow));
+    }
 
     // Toggle open/close
     bubble.addEventListener("click", () => {

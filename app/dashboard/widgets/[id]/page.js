@@ -275,6 +275,7 @@ export default function WidgetDetailPage({ params }) {
     greeting: "",
     style: "bubble",
     accentColor: "#F97316",
+    bgColor: "#ffffff",
     llm_provider: "gemini-flash",
     domains: "",
   });
@@ -292,8 +293,10 @@ export default function WidgetDetailPage({ params }) {
         greeting: cfg.greeting ?? "",
         style: cfg.style ?? "bubble",
         accentColor: cfg.accentColor ?? "#F97316",
+        bgColor: cfg.bgColor ?? "#ffffff",
         llm_provider: cfg.llm_provider ?? "gemini-flash",
         domains: (widget?.allowed_domains ?? []).join(", "),
+        darkMode: cfg.darkMode ?? false,
       });
     }
   }, [widget]);
@@ -346,7 +349,9 @@ export default function WidgetDetailPage({ params }) {
           greeting: form.greeting.trim(),
           style: form.style,
           accentColor: form.accentColor,
+          bgColor: form.bgColor ?? "#ffffff",
           llm_provider: form.llm_provider,
+          darkMode: form.darkMode,
         },
       })
       .eq("id", id);
@@ -457,6 +462,14 @@ export default function WidgetDetailPage({ params }) {
           {widget?.status === "active" ? "● Active" : "○ Inactive"}
         </span>
 
+        <button
+          onClick={() =>
+            window.open(`/widget-test.html?widget_id=${id}`, "_blank")
+          }
+          style={{ ...s.btnGhost, minHeight: "44px" }}
+        >
+          Test
+        </button>
         <button onClick={handleSave} disabled={saving} style={s.btnPrimary}>
           {saving ? "Saving…" : "Save"}
         </button>
@@ -604,29 +617,116 @@ export default function WidgetDetailPage({ params }) {
             </div>
           </div>
 
-          {/* Accent colour */}
-          <div style={s.field}>
-            <label style={s.label}>Accent Colour</label>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <input
-                type="color"
-                value={form.accentColor}
-                onChange={(e) => set("accentColor", e.target.value)}
+          {/* Accent + Background colour */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "12px",
+            }}
+          >
+            <div style={s.field}>
+              <label style={s.label}>Accent Colour</label>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+              >
+                <input
+                  type="color"
+                  value={form.accentColor}
+                  onChange={(e) => set("accentColor", e.target.value)}
+                  style={{
+                    width: "44px",
+                    height: "44px",
+                    border: "none",
+                    background: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                />
+                <input
+                  value={form.accentColor}
+                  onChange={(e) => set("accentColor", e.target.value)}
+                  style={{ ...s.input, width: "110px" }}
+                />
+              </div>
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Background Colour</label>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+              >
+                <input
+                  type="color"
+                  value={form.bgColor ?? "#ffffff"}
+                  onChange={(e) => set("bgColor", e.target.value)}
+                  style={{
+                    width: "44px",
+                    height: "44px",
+                    border: "none",
+                    background: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                />
+                <input
+                  value={form.bgColor ?? "#ffffff"}
+                  onChange={(e) => set("bgColor", e.target.value)}
+                  style={{ ...s.input, width: "110px" }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Dark Mode */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div>
+              <div style={s.label}>Dark Mode</div>
+              <div
                 style={{
-                  width: "44px",
-                  height: "44px",
-                  border: "none",
-                  background: "none",
-                  cursor: "pointer",
-                  padding: 0,
+                  fontSize: "0.78rem",
+                  color: "var(--ink-400)",
+                  marginTop: 3,
+                }}
+              >
+                Chat window uses dark background
+              </div>
+            </div>
+            <button
+              onClick={() => set("darkMode", !form.darkMode)}
+              style={{
+                width: 44,
+                height: 24,
+                borderRadius: 12,
+                border: "none",
+                background: form.darkMode
+                  ? "var(--cobalt-600)"
+                  : "var(--surface-3)",
+                cursor: "pointer",
+                position: "relative",
+                transition: "background 0.2s",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  top: 3,
+                  left: form.darkMode ? 23 : 3,
+                  width: 18,
+                  height: 18,
+                  borderRadius: "50%",
+                  background: "#fff",
+                  transition: "left 0.2s",
+                  display: "block",
                 }}
               />
-              <input
-                value={form.accentColor}
-                onChange={(e) => set("accentColor", e.target.value)}
-                style={{ ...s.input, width: "110px" }}
-              />
-            </div>
+            </button>
           </div>
 
           {/* Domains */}

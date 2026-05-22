@@ -390,9 +390,630 @@ function CostsTab({ clientId }) {
   );
 }
 
+// ─── Invoice Tab ──────────────────────────────────────────────────────────────
+
+const MONTHS = Array.from({ length: 12 }, (_, i) => {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - i);
+  return {
+    label: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
+    year: d.getFullYear(),
+    month: d.getMonth(),
+  };
+});
+
+async function fetchInvoiceData(clientId, year, month) {
+  const start = new Date(year, month, 1).toISOString();
+  const end = new Date(year, month + 1, 1).toISOString();
+
+  const [logsRes, agentsRes, campaignsRes] = await Promise.all([
+    supabase
+      .from("call_logs")
+      .select(
+        "id, agent_id, campaign_id, direction, duration_seconds, total_cost_inr, status, started_at",
+      )
+      .eq("client_id", clientId)
+      .gte("started_at", start)
+      .lt("started_at", end),
+    supabase.from("agents").select("id, name, type").eq("client_id", clientId),
+    supabase.from("campaigns").select("id, name").eq("client_id", clientId),
+  ]);
+
+  return {
+    logs: logsRes.data ?? [],
+    agents: agentsRes.data ?? [],
+    campaigns: campaignsRes.data ?? [],
+  };
+}
+
+function InvoiceTab({ clientId, clientName, contactName, contactEmail }) {
+  const [selectedMonth, setSelectedMonth] = useState(MONTHS[0]);
+  const { data, isLoading } = useSWR(
+    ["invoice", clientId, selectedMonth.year, selectedMonth.month],
+    ([, cid, y, m]) => fetchInvoiceData(cid, y, m),
+  );
+
+  const logs = data?.logs ?? [];
+  const agentIndex = Object.fromEntries(
+    (data?.agents ?? []).map((a) => [a.id, a]),
+  );
+  const campaignIndex = Object.fromEntries(
+    (data?.campaigns ?? []).map((c) => [c.id, c]),
+  );
+
+  const totalCost = logs.reduce(
+    (s, l) => s + (parseFloat(l.total_cost_inr) || 0),
+    0,
+  );
+  const totalDur = logs.reduce((s, l) => s + (l.duration_seconds ?? 0), 0);
+  const totalCalls = logs.length;
+  const completed = logs.filter((l) => l.status === "completed").length;
+
+  // Per-agent rollup
+  const agentMap = {};
+  for (const l of logs) {
+    const aid = l.agent_id ?? "__unknown__";
+    if (!agentMap[aid]) agentMap[aid] = { calls: 0, dur: 0, cost: 0 };
+    agentMap[aid].calls++;
+    agentMap[aid].dur += l.duration_seconds ?? 0;
+    agentMap[aid].cost += parseFloat(l.total_cost_inr) || 0;
+  }
+
+  // Per-campaign rollup
+  const campMap = {};
+  for (const l of logs) {
+    if (!l.campaign_id) continue;
+    const cid = l.campaign_id;
+    if (!campMap[cid])
+      campMap[cid] = { calls: 0, dur: 0, cost: 0, answered: 0 };
+    campMap[cid].calls++;
+    campMap[cid].dur += l.duration_seconds ?? 0;
+    campMap[cid].cost += parseFloat(l.total_cost_inr) || 0;
+    if (l.status === "completed") campMap[cid].answered++;
+  }
+
+  const invoiceNumber = `INV-${selectedMonth.year}${String(selectedMonth.month + 1).padStart(2, "0")}-${clientId.slice(0, 6).toUpperCase()}`;
+  const generatedDate = new Date().toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  return (
+    <div>
+      {/* Controls */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "1.25rem",
+          flexWrap: "wrap",
+          gap: "10px",
+        }}
+      >
+        <select
+          value={selectedMonth.label}
+          onChange={(e) =>
+            setSelectedMonth(MONTHS.find((m) => m.label === e.target.value))
+          }
+          style={{ ...s.input, width: "auto", minWidth: "200px" }}
+        >
+          {MONTHS.map((m) => (
+            <option key={m.label} value={m.label}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <button onClick={() => window.print()} style={s.btnPrimary}>
+          Print / Save PDF
+        </button>
+      </div>
+
+      {/* Invoice */}
+      <div
+        id="invoice-print"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "12px",
+          padding: "2rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "1.5rem",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+            gap: "1rem",
+          }}
+        >
+          <div>
+            <p
+              style={{
+                fontFamily: "var(--font-serif)",
+                fontSize: "1.5rem",
+                color: "var(--ink-900)",
+                margin: "0 0 4px",
+              }}
+            >
+              Tofabza Sounds
+            </p>
+            <p
+              style={{
+                fontSize: "0.78rem",
+                color: "var(--ink-400)",
+                margin: 0,
+              }}
+            >
+              tonyeappen@tofabza.com
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "11px",
+                color: "var(--ink-400)",
+                margin: "0 0 4px",
+                letterSpacing: "0.06em",
+              }}
+            >
+              INVOICE
+            </p>
+            <p
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "13px",
+                color: "var(--ink-900)",
+                margin: "0 0 4px",
+              }}
+            >
+              {invoiceNumber}
+            </p>
+            <p
+              style={{
+                fontSize: "0.78rem",
+                color: "var(--ink-400)",
+                margin: 0,
+              }}
+            >
+              {generatedDate}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* Bill to */}
+        <div>
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "9px",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--ink-400)",
+              margin: "0 0 6px",
+            }}
+          >
+            Bill To
+          </p>
+          <p
+            style={{
+              fontSize: "0.95rem",
+              fontWeight: 600,
+              color: "var(--ink-900)",
+              margin: "0 0 2px",
+            }}
+          >
+            {clientName}
+          </p>
+          {contactName && (
+            <p
+              style={{
+                fontSize: "0.84rem",
+                color: "var(--ink-500)",
+                margin: "0 0 2px",
+              }}
+            >
+              {contactName}
+            </p>
+          )}
+          {contactEmail && (
+            <p
+              style={{
+                fontSize: "0.84rem",
+                color: "var(--ink-500)",
+                margin: 0,
+              }}
+            >
+              {contactEmail}
+            </p>
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* Summary */}
+        <div>
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "9px",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--ink-400)",
+              margin: "0 0 12px",
+            }}
+          >
+            Usage Summary — {selectedMonth.label}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: "1rem",
+            }}
+          >
+            {[
+              { label: "Total Calls", value: isLoading ? "—" : totalCalls },
+              { label: "Completed", value: isLoading ? "—" : completed },
+              {
+                label: "Total Duration",
+                value: isLoading
+                  ? "—"
+                  : totalDur < 60
+                    ? totalDur + "s"
+                    : Math.floor(totalDur / 60) + "m " + (totalDur % 60) + "s",
+              },
+              {
+                label: "Total Cost",
+                value: isLoading ? "—" : "₹" + totalCost.toFixed(2),
+              },
+            ].map(({ label, value }) => (
+              <div
+                key={label}
+                style={{
+                  background: "var(--surface-2)",
+                  borderRadius: "8px",
+                  padding: "14px",
+                }}
+              >
+                <p
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "9px",
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: "var(--ink-400)",
+                    margin: "0 0 6px",
+                  }}
+                >
+                  {label}
+                </p>
+                <p
+                  style={{
+                    fontFamily: "var(--font-serif)",
+                    fontSize: "1.4rem",
+                    color: "var(--ink-900)",
+                    margin: 0,
+                  }}
+                >
+                  {value}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Per-agent */}
+        {!isLoading && Object.keys(agentMap).length > 0 && (
+          <div>
+            <p
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "9px",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "var(--ink-400)",
+                margin: "0 0 12px",
+              }}
+            >
+              By Agent
+            </p>
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                overflow: "hidden",
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      borderBottom: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                    }}
+                  >
+                    {["Agent", "Calls", "Duration", "Cost"].map((h) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "left",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "9px",
+                          letterSpacing: "0.06em",
+                          color: "var(--ink-400)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(agentMap).map(([aid, v], i, arr) => (
+                    <tr
+                      key={aid}
+                      style={{
+                        borderBottom:
+                          i < arr.length - 1
+                            ? "1px solid var(--border)"
+                            : "none",
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-900)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {agentIndex[aid]?.name ?? "Unknown"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {v.calls}
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {Math.floor(v.dur / 60)}m {v.dur % 60}s
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        ₹{v.cost.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Per-campaign */}
+        {!isLoading && Object.keys(campMap).length > 0 && (
+          <div>
+            <p
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "9px",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "var(--ink-400)",
+                margin: "0 0 12px",
+              }}
+            >
+              By Campaign
+            </p>
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                overflow: "hidden",
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <thead>
+                  <tr
+                    style={{
+                      borderBottom: "1px solid var(--border)",
+                      background: "var(--surface-2)",
+                    }}
+                  >
+                    {[
+                      "Campaign",
+                      "Calls",
+                      "Answered",
+                      "Answer Rate",
+                      "Cost",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "left",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "9px",
+                          letterSpacing: "0.06em",
+                          color: "var(--ink-400)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(campMap).map(([cid, v], i, arr) => (
+                    <tr
+                      key={cid}
+                      style={{
+                        borderBottom:
+                          i < arr.length - 1
+                            ? "1px solid var(--border)"
+                            : "none",
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-900)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {campaignIndex[cid]?.name ?? "Unknown"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {v.calls}
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {v.answered}
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {v.calls ? Math.round((v.answered / v.calls) * 100) : 0}
+                        %
+                      </td>
+                      <td
+                        style={{
+                          padding: "9px 14px",
+                          color: "var(--ink-700)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        ₹{v.cost.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* Total line */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "baseline",
+            gap: "16px",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--ink-400)",
+            }}
+          >
+            Total Due
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: "2rem",
+              color: "var(--ink-900)",
+            }}
+          >
+            {isLoading ? "—" : "₹" + totalCost.toFixed(2)}
+          </span>
+        </div>
+
+        <p
+          style={{
+            fontSize: "0.75rem",
+            color: "var(--ink-400)",
+            margin: 0,
+            textAlign: "center",
+          }}
+        >
+          This is a usage report generated by Tofabza Sounds. Actual billing may
+          vary based on your plan.
+        </p>
+      </div>
+
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #invoice-print, #invoice-print * { visibility: visible; }
+          #invoice-print { position: absolute; left: 0; top: 0; width: 100%; border: none !important; border-radius: 0 !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const TABS = ["Agents", "Widgets", "Campaigns", "Costs"];
+const TABS = ["Agents", "Widgets", "Campaigns", "Costs", "Invoice"];
 
 export default function ClientDetailPage({ params }) {
   const { id } = use(params);
@@ -481,6 +1102,14 @@ export default function ClientDetailPage({ params }) {
         {activeTab === "Widgets" && <WidgetsTab clientId={id} />}
         {activeTab === "Campaigns" && <CampaignsTab clientId={id} />}
         {activeTab === "Costs" && <CostsTab clientId={id} />}
+        {activeTab === "Invoice" && (
+          <InvoiceTab
+            clientId={id}
+            clientName={client.name}
+            contactName={client.contact_name}
+            contactEmail={client.contact_email}
+          />
+        )}
       </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>

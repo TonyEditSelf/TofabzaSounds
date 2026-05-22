@@ -1,0 +1,25 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/campaigns",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "app/api/stt/route.js": {
+      "maxDuration": 30
+    },
+    "app/api/tts/route.js": {
+      "maxDuration": 30
+    },
+    "app/api/kb/upload/route.js": {
+      "maxDuration": 60
+    },
+    "app/api/campaigns/[id]/launch/route.js": {
+      "maxDuration": 60
+    },
+    "app/api/cron/campaigns/route.js": {
+      "maxDuration": 60
+    }
+  }
+}

@@ -69,17 +69,36 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 text-sm text-muted-foreground animate-pulse">
+      <div style={{ padding: 32, fontSize: 13, color: "var(--ink-500)" }}>
         Loading settings…
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-4 space-y-10">
+    <div
+      style={{
+        maxWidth: 640,
+        margin: "0 auto",
+        padding: "32px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 40,
+      }}
+    >
       <div>
-        <h1 className="text-xl font-medium">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            margin: 0,
+            fontFamily: "var(--font-serif)",
+            color: "var(--ink-900)",
+          }}
+        >
+          Settings
+        </h1>
+        <p style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 4 }}>
           Global defaults and API credentials. Agent/widget configs override
           these individually.
         </p>
@@ -286,18 +305,39 @@ export default function SettingsPage() {
         </p>
       </Section>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && (
+        <p style={{ fontSize: 13, color: "var(--crimson-500)" }}>{error}</p>
+      )}
 
-      <div className="flex items-center justify-end gap-3 pt-4 border-t">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 12,
+          paddingTop: 16,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
         {savedAt && (
-          <span className="text-xs text-green-600">
+          <span style={{ fontSize: 12, color: "var(--emerald-600)" }}>
             ✓ Saved {new Date(savedAt).toLocaleTimeString()}
           </span>
         )}
         <button
           onClick={save}
           disabled={saving}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+          style={{
+            padding: "8px 18px",
+            fontSize: 13,
+            fontWeight: 600,
+            borderRadius: 8,
+            border: "none",
+            background: "var(--cobalt-600)",
+            color: "#fff",
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.6 : 1,
+          }}
         >
           {saving ? "Saving…" : "Save settings"}
         </button>
@@ -310,17 +350,37 @@ export default function SettingsPage() {
 
 function Section({ title, subtitle, icon, children }) {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 pb-2 border-b">
-        <span className="text-base">{icon}</span>
-        <span className="text-sm font-medium">{title}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          paddingBottom: 8,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span style={{ fontSize: 16 }}>{icon}</span>
+        <span
+          style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-900)" }}
+        >
+          {title}
+        </span>
         {subtitle && (
-          <span className="ml-auto text-xs text-muted-foreground">
+          <span
+            style={{
+              marginLeft: "auto",
+              fontSize: 12,
+              color: "var(--ink-500)",
+            }}
+          >
             {subtitle}
           </span>
         )}
       </div>
-      <div className="space-y-3">{children}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -328,10 +388,18 @@ function Section({ title, subtitle, icon, children }) {
 function Row({ label, children }) {
   return (
     <div
-      className="grid items-center gap-3"
-      style={{ gridTemplateColumns: "160px 1fr" }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "160px 1fr",
+        alignItems: "center",
+        gap: 12,
+      }}
     >
-      <span className="text-sm text-muted-foreground text-right">{label}</span>
+      <span
+        style={{ fontSize: 13, color: "var(--ink-500)", textAlign: "right" }}
+      >
+        {label}
+      </span>
       {children}
     </div>
   );
@@ -353,11 +421,28 @@ function SecretField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 h-8 px-3 text-xs font-mono rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+          style={{
+            flex: 1,
+            height: 32,
+            padding: "0 12px",
+            fontSize: 12,
+            fontFamily: "var(--font-mono)",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface-2)",
+            color: "var(--ink-900)",
+            outline: "none",
+          }}
         />
         <button
           onClick={onToggle}
-          className="text-muted-foreground hover:text-foreground transition-colors text-sm"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            fontSize: 14,
+            color: "var(--ink-500)",
+          }}
           aria-label={revealed ? "Hide" : "Show"}
         >
           {revealed ? "🙈" : "👁"}
@@ -375,7 +460,17 @@ function TextField({ label, value, onChange, placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-8 px-3 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+        style={{
+          height: 32,
+          padding: "0 12px",
+          fontSize: 13,
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+          color: "var(--ink-900)",
+          outline: "none",
+          width: "100%",
+        }}
       />
     </Row>
   );
@@ -387,7 +482,17 @@ function SelectField({ label, value, onChange, options }) {
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 px-3 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+        style={{
+          height: 32,
+          padding: "0 12px",
+          fontSize: 13,
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+          color: "var(--ink-900)",
+          outline: "none",
+          width: "100%",
+        }}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -410,9 +515,21 @@ function NumberField({ label, value, onChange, unit, min, max, step }) {
           min={min}
           max={max}
           step={step}
-          className="w-24 h-8 px-3 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+          style={{
+            width: 96,
+            height: 32,
+            padding: "0 12px",
+            fontSize: 13,
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface-2)",
+            color: "var(--ink-900)",
+            outline: "none",
+          }}
         />
-        {unit && <span className="text-xs text-muted-foreground">{unit}</span>}
+        {unit && (
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{unit}</span>
+        )}
       </div>
     </Row>
   );
@@ -426,7 +543,19 @@ function TextareaField({ label, value, onChange, placeholder }) {
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={3}
-        className="px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+        style={{
+          padding: "8px 12px",
+          fontSize: 13,
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+          color: "var(--ink-900)",
+          outline: "none",
+          resize: "vertical",
+          width: "100%",
+          boxSizing: "border-box",
+          fontFamily: "var(--font-sans)",
+        }}
       />
     </Row>
   );
@@ -440,17 +569,36 @@ function ToggleField({ label, hint, value, onChange }) {
           role="switch"
           aria-checked={value}
           onClick={() => onChange(!value)}
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-            value ? "bg-primary" : "bg-input"
-          }`}
+          style={{
+            position: "relative",
+            display: "inline-flex",
+            height: 20,
+            width: 36,
+            borderRadius: 9999,
+            border: "none",
+            cursor: "pointer",
+            background: value ? "var(--cobalt-600)" : "var(--surface-3)",
+            transition: "background 0.2s",
+            flexShrink: 0,
+          }}
         >
           <span
-            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-              value ? "translate-x-4" : "translate-x-0"
-            }`}
+            style={{
+              position: "absolute",
+              top: 2,
+              left: value ? 18 : 2,
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#fff",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+              transition: "left 0.2s",
+            }}
           />
         </button>
-        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+        {hint && (
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{hint}</span>
+        )}
       </div>
     </Row>
   );

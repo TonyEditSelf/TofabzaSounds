@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tofabza Widget — Test Bench</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap");
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #0d0f12;
+        --surface: #161920;
+        --surface-2: #1e2229;
+        --border: #2a2e38;
+        --ink: #e8eaf0;
+        --ink-2: #9ca3af;
+        --ink-3: #4b5563;
+        --green: #22c55e;
+        --red: #e11d48;
+        --blue: #2563eb;
+        --amber: #f59e0b;
+        --mono: "JetBrains Mono", monospace;
+        --sans: "DM Sans", sans-serif;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 290px 1fr;
+        grid-template-rows: 52px 1fr;
+      }
+
+      /* ── Top bar ── */
+      header {
+        grid-column: 1 / -1;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        gap: 12px;
+      }
+      .logo {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: 0.05em;
+      }
+      .logo span {
+        color: var(--amber);
+      }
+      .badge {
+        font-family: var(--mono);
+        font-size: 9px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 7px;
+        color: var(--ink-3);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .spacer {
+        flex: 1;
+      }
+      #status-pill {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--ink-2);
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 5px 12px;
+      }
+      #status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ink-3);
+        transition:
+          background 0.3s,
+          box-shadow 0.3s;
+        flex-shrink: 0;
+      }
+      #status-dot.ok {
+        background: var(--green);
+        box-shadow: 0 0 6px var(--green);
+      }
+      #status-dot.err {
+        background: var(--red);
+        box-shadow: 0 0 6px var(--red);
+      }
+      #status-dot.loading {
+        background: var(--amber);
+        box-shadow: 0 0 6px var(--amber);
+        animation: blink 0.8s infinite;
+      }
+
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      /* ── Sidebar ── */
+      aside {
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        overflow-y: auto;
+      }
+
+      .section {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 16px;
+        margin-bottom: 16px;
+      }
+      .section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+      }
+
+      .section-title {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        margin-bottom: 12px;
+      }
+
+      label {
+        display: block;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--ink-2);
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+
+      input[type="text"],
+      input[type="url"],
+      select {
+        width: 100%;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--ink);
+        outline: none;
+        transition: border-color 0.15s;
+        margin-bottom: 10px;
+      }
+      input[type="text"]:focus,
+      input[type="url"]:focus,
+      select:focus {
+        border-color: var(--blue);
+      }
+
+      .color-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      input[type="color"] {
+        width: 36px;
+        height: 30px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface-2);
+        cursor: pointer;
+        padding: 2px 3px;
+        flex-shrink: 0;
+      }
+      .color-hex {
+        flex: 1;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--ink);
+        outline: none;
+      }
+      .color-hex:focus {
+        border-color: var(--blue);
+      }
+
+      .btn {
+        width: 100%;
+        padding: 9px 14px;
+        border-radius: 7px;
+        border: none;
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        letter-spacing: 0.04em;
+        transition:
+          opacity 0.15s,
+          transform 0.1s;
+      }
+      .btn:active {
+        transform: scale(0.98);
+      }
+      .btn-primary {
+        background: var(--blue);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        opacity: 0.88;
+      }
+      .btn-danger {
+        background: #1a0a10;
+        color: var(--red);
+        border: 1px solid #3a1020;
+        margin-top: 6px;
+      }
+      .btn-danger:hover {
+        background: #2a0f1a;
+      }
+      .btn-ghost {
+        background: var(--surface-2);
+        color: var(--ink-2);
+        border: 1px solid var(--border);
+        margin-top: 6px;
+      }
+      .btn-ghost:hover {
+        color: var(--ink);
+      }
+
+      /* ── Main area ── */
+      main {
+        display: grid;
+        grid-template-rows: 1fr 220px;
+        overflow: hidden;
+      }
+
+      /* Preview pane */
+      #preview-wrap {
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(
+            ellipse at 20% 50%,
+            rgba(37, 99, 235, 0.06) 0%,
+            transparent 60%
+          ),
+          radial-gradient(
+            ellipse at 80% 20%,
+            rgba(245, 158, 11, 0.04) 0%,
+            transparent 50%
+          ),
+          var(--bg);
+      }
+      #preview-label {
+        position: absolute;
+        top: 16px;
+        left: 20px;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        pointer-events: none;
+      }
+
+      /* Grid lines */
+      #preview-wrap::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(var(--border) 1px, transparent 1px),
+          linear-gradient(90deg, var(--border) 1px, transparent 1px);
+        background-size: 40px 40px;
+        opacity: 0.3;
+        pointer-events: none;
+      }
+
+      #fake-page {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        pointer-events: none;
+        user-select: none;
+      }
+      .fake-bar {
+        height: 8px;
+        border-radius: 4px;
+        background: var(--border);
+        opacity: 0.5;
+      }
+
+      #widget-container {
+        position: absolute;
+        inset: 0;
+        pointer-events: none; /* container is passthrough */
+      }
+      #widget-container > * {
+        pointer-events: all;
+      }
+
+      /* ── Log pane ── */
+      #log-pane {
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #log-header {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border);
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      #log-header span {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      #clear-log {
+        margin-left: auto;
+        background: none;
+        border: none;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--ink-3);
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      #clear-log:hover {
+        color: var(--ink-2);
+        background: var(--surface-2);
+      }
+
+      #log-output {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .log-line {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        animation: fadeIn 0.2s ease;
+      }
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(2px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      .log-time {
+        color: var(--ink-3);
+        flex-shrink: 0;
+        font-size: 10px;
+      }
+      .log-tag {
+        flex-shrink: 0;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+      }
+      .tag-info {
+        background: rgba(37, 99, 235, 0.15);
+        color: #60a5fa;
+      }
+      .tag-ok {
+        background: rgba(34, 197, 94, 0.12);
+        color: #4ade80;
+      }
+      .tag-warn {
+        background: rgba(245, 158, 11, 0.12);
+        color: #fcd34d;
+      }
+      .tag-err {
+        background: rgba(225, 29, 72, 0.12);
+        color: #fb7185;
+      }
+      .log-msg {
+        color: var(--ink-2);
+        word-break: break-all;
+      }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar {
+        width: 5px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <header>
+      <p class="logo">TOFABZA <span>SOUNDS</span></p>
+      <span class="badge">Widget Test Bench</span>
+      <div class="spacer"></div>
+      <div id="status-pill">
+        <div id="status-dot"></div>
+        <span id="status-label">not loaded</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside>
+      <div class="section">
+        <p class="section-title">Config</p>
+
+        <label>BASE URL</label>
+        <input type="url" id="base-url" value="http://localhost:3000" />
+
+        <label>WIDGET ID</label>
+        <input
+          type="text"
+          id="widget-id"
+          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        />
+
+        <label>ACCENT COLOR</label>
+        <div class="color-row">
+          <input type="color" id="accent-picker" value="#2563EB" />
+          <input
+            type="text"
+            id="accent-hex"
+            class="color-hex"
+            value="#2563EB"
+            maxlength="7"
+          />
+        </div>
+
+        <label>BACKGROUND COLOR</label>
+        <div class="color-row">
+          <input type="color" id="bg-picker" value="#ffffff" />
+          <input
+            type="text"
+            id="bg-hex"
+            class="color-hex"
+            value="#ffffff"
+            maxlength="7"
+          />
+        </div>
+
+        <button class="btn btn-primary" onclick="loadWidget()">
+          Load Widget
+        </button>
+        <button class="btn btn-danger" onclick="unloadWidget()">Unload</button>
+      </div>
+
+      <div class="section">
+        <p class="section-title">Quick Tests</p>
+        <button
+          class="btn btn-ghost"
+          onclick="
+            testEndpoint('/api/widget/' + getId() + '/config', 'Widget Config')
+          "
+        >
+          Test Config Endpoint
+        </button>
+        <button
+          class="btn btn-ghost"
+          style="margin-top: 6px"
+          onclick="
+            testEndpoint('/api/widget/token', 'Token', 'POST', {
+              widget_id: getId(),
+              origin: window.location.origin,
+            })
+          "
+        >
+          Test Token Endpoint
+        </button>
+        <button
+          class="btn btn-ghost"
+          style="margin-top: 6px"
+          onclick="testChat()"
+        >
+          Test Chat Endpoint
+        </button>
+        <button
+          class="btn btn-ghost"
+          style="margin-top: 6px"
+          onclick="testTTS()"
+        >
+          Test TTS Endpoint
+        </button>
+      </div>
+
+      <div class="section">
+        <p class="section-title">Simulate</p>
+        <label>VIEWPORT</label>
+        <select id="viewport-select" onchange="changeViewport(this.value)">
+          <option value="full">Full width</option>
+          <option value="tablet">Tablet (768px)</option>
+          <option value="mobile">Mobile (390px)</option>
+        </select>
+        <button class="btn btn-ghost" onclick="reloadWidget()">
+          Reload Widget
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main>
+      <!-- Preview -->
+      <div id="preview-wrap">
+        <p id="preview-label">PREVIEW</p>
+        <div id="fake-page">
+          <div class="fake-bar" style="width: 320px"></div>
+          <div class="fake-bar" style="width: 260px; opacity: 0.35"></div>
+          <div class="fake-bar" style="width: 200px; opacity: 0.2"></div>
+          <p
+            style="
+              font-family: var(--mono);
+              font-size: 11px;
+              color: var(--ink-3);
+              margin-top: 8px;
+            "
+          >
+            Load a widget ID to begin
+          </p>
+        </div>
+        <div id="widget-container"></div>
+      </div>
+
+      <!-- Log -->
+      <div id="log-pane">
+        <div id="log-header">
+          <span>Console</span>
+          <button id="clear-log" onclick="clearLog()">clear</button>
+        </div>
+        <div id="log-output"></div>
+      </div>
+    </main>
+
+    <script>
+      // ── Apply colors live ────────────────────────────────────────────────────
+
+      function applyColors() {
+        const host = document.getElementById("tofabza-widget-host");
+        if (!host) return;
+        const accent = document.getElementById("accent-hex").value || "#2563EB";
+        const bg = document.getElementById("bg-hex").value || "#ffffff";
+        host.style.setProperty("--accent", accent);
+        host.style.setProperty("--widget-bg", bg);
+      }
+
+      // ── Logging ──────────────────────────────────────────────────────────────
+
+      function log(msg, type = "info") {
+        const out = document.getElementById("log-output");
+        const line = document.createElement("div");
+        line.className = "log-line";
+        const now = new Date();
+        const ts =
+          now.toTimeString().slice(0, 8) +
+          "." +
+          String(now.getMilliseconds()).padStart(3, "0");
+        const tagClass =
+          { info: "tag-info", ok: "tag-ok", warn: "tag-warn", err: "tag-err" }[
+            type
+          ] ?? "tag-info";
+        const tagLabel =
+          { info: "INFO", ok: "OK", warn: "WARN", err: "ERR" }[type] ?? "INFO";
+        line.innerHTML = `<span class="log-time">${ts}</span><span class="log-tag ${tagClass}">${tagLabel}</span><span class="log-msg">${escHtml(String(msg))}</span>`;
+        out.appendChild(line);
+        out.scrollTop = out.scrollHeight;
+      }
+
+      function escHtml(s) {
+        return s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function clearLog() {
+        document.getElementById("log-output").innerHTML = "";
+        log("Log cleared.", "info");
+      }
+
+      function setStatus(state, label) {
+        const dot = document.getElementById("status-dot");
+        const lbl = document.getElementById("status-label");
+        dot.className = "";
+        if (state) dot.classList.add(state);
+        lbl.textContent = label;
+      }
+
+      // ── Helpers ──────────────────────────────────────────────────────────────
+
+      function getBase() {
+        return document.getElementById("base-url").value.replace(/\/$/, "");
+      }
+      function getId() {
+        return document.getElementById("widget-id").value.trim();
+      }
+
+      // ── Color sync ───────────────────────────────────────────────────────────
+
+      document
+        .getElementById("accent-picker")
+        .addEventListener("input", function () {
+          document.getElementById("accent-hex").value = this.value;
+          applyColors();
+        });
+      document
+        .getElementById("accent-hex")
+        .addEventListener("input", function () {
+          if (/^#[0-9a-fA-F]{6}$/.test(this.value)) {
+            document.getElementById("accent-picker").value = this.value;
+            applyColors();
+          }
+        });
+      document
+        .getElementById("bg-picker")
+        .addEventListener("input", function () {
+          document.getElementById("bg-hex").value = this.value;
+          applyColors();
+        });
+      document.getElementById("bg-hex").addEventListener("input", function () {
+        if (/^#[0-9a-fA-F]{6}$/.test(this.value)) {
+          document.getElementById("bg-picker").value = this.value;
+          applyColors();
+        }
+      });
+
+      // ── Widget load/unload ───────────────────────────────────────────────────
+
+      let widgetLoaded = false;
+
+      function loadWidget() {
+        const widgetId = getId();
+        const baseUrl = getBase();
+        const accent = document.getElementById("accent-hex").value || "#2563EB";
+        const bg = document.getElementById("bg-hex").value || "#ffffff";
+
+        if (!widgetId) {
+          log("Widget ID is required.", "err");
+          return;
+        }
+
+        unloadWidget();
+
+        setStatus("loading", "loading…");
+        log(`Loading widget ${widgetId} from ${baseUrl}`, "info");
+
+        // Set globals the embed script reads
+        window.TofabzaWidgetId = widgetId;
+        window.__TOFABZA_BASE_URL__ = baseUrl;
+
+        // Patch fetch inside widget scope — intercept to log
+        const origFetch = window.fetch;
+        window.fetch = function (url, opts) {
+          const short =
+            typeof url === "string" ? url.replace(baseUrl, "") : String(url);
+          log(`→ ${opts?.method ?? "GET"} ${short}`, "info");
+          return origFetch
+            .apply(this, arguments)
+            .then((res) => {
+              log(`← ${res.status} ${short}`, res.ok ? "ok" : "err");
+              return res;
+            })
+            .catch((err) => {
+              log(`✗ ${short} — ${err.message}`, "err");
+              throw err;
+            });
+        };
+
+        const script = document.createElement("script");
+        script.id = "tofabza-embed-script";
+        script.src = `${baseUrl}/widget/v1/embed.js?t=${Date.now()}`;
+        script.onload = () => {
+          widgetLoaded = true;
+          setStatus("ok", "widget loaded");
+          log("embed.js loaded successfully.", "ok");
+          // Try to set accent after short delay
+          setTimeout(() => {
+            const host = document.getElementById("tofabza-widget-host");
+            if (host) {
+              host.style.setProperty("--accent", accent);
+              host.style.setProperty("--widget-bg", bg);
+              // Move host into our container
+              document.getElementById("widget-container").appendChild(host);
+              log("Widget host mounted in preview.", "ok");
+            }
+          }, 500);
+        };
+        script.onerror = () => {
+          setStatus("err", "load failed");
+          log(
+            `Failed to load embed.js from ${baseUrl}. Is your dev server running?`,
+            "err",
+          );
+        };
+        document.head.appendChild(script);
+      }
+
+      function unloadWidget() {
+        // Remove script
+        const old = document.getElementById("tofabza-embed-script");
+        if (old) old.remove();
+
+        // Remove widget host
+        const host = document.getElementById("tofabza-widget-host");
+        if (host) host.remove();
+
+        // Restore fetch if patched
+        widgetLoaded = false;
+        setStatus(null, "not loaded");
+        if (widgetLoaded) log("Widget unloaded.", "warn");
+        window.TofabzaWidgetId = undefined;
+      }
+
+      function reloadWidget() {
+        log("Reloading widget…", "warn");
+        loadWidget();
+      }
+
+      // ── Viewport sim ─────────────────────────────────────────────────────────
+
+      function changeViewport(val) {
+        const preview = document.getElementById("preview-wrap");
+        const widths = { full: "100%", tablet: "768px", mobile: "390px" };
+        preview.style.maxWidth = widths[val] ?? "100%";
+        preview.style.margin = val === "full" ? "0" : "0 auto";
+        log(`Viewport set to ${val}`, "info");
+      }
+
+      // ── Quick tests ───────────────────────────────────────────────────────────
+
+      async function testEndpoint(path, label, method = "GET", body = null) {
+        const url = getBase() + path;
+        log(`Testing ${label}: ${method} ${path}`, "info");
+        try {
+          const opts = { method, headers: {} };
+          if (body) {
+            opts.headers["Content-Type"] = "application/json";
+            opts.body = JSON.stringify(body);
+          }
+          const res = await fetch(url, opts);
+          const text = await res.text();
+          let parsed;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = text;
+          }
+          if (res.ok) {
+            log(
+              `${label} OK (${res.status}): ${JSON.stringify(parsed).slice(0, 120)}`,
+              "ok",
+            );
+          } else {
+            log(
+              `${label} FAILED (${res.status}): ${JSON.stringify(parsed).slice(0, 120)}`,
+              "err",
+            );
+          }
+        } catch (err) {
+          log(`${label} ERROR: ${err.message}`, "err");
+        }
+      }
+
+      async function testChat() {
+        const widgetId = getId();
+        if (!widgetId) {
+          log("Widget ID required for chat test.", "err");
+          return;
+        }
+        const url = getBase() + "/api/chat";
+        log('Testing /api/chat with "Hello"…', "info");
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              widget_id: widgetId,
+              session_id: crypto.randomUUID(),
+              message: "Hello",
+              history: [],
+              language: "en-IN",
+            }),
+          });
+          const data = await res.json();
+          if (res.ok && data.reply) {
+            log(
+              `Chat OK — reply: "${data.reply.slice(0, 80)}${data.reply.length > 80 ? "…" : ""}"`,
+              "ok",
+            );
+          } else {
+            log(
+              `Chat FAILED (${res.status}): ${JSON.stringify(data).slice(0, 120)}`,
+              "err",
+            );
+          }
+        } catch (err) {
+          log(`Chat ERROR: ${err.message}`, "err");
+        }
+      }
+
+      async function testTTS() {
+        const url = getBase() + "/api/tts";
+        log("Testing /api/tts…", "info");
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: "Hello, this is a TTS test.",
+              language: "en-IN",
+              speaker: "anand",
+              pace: 1.0,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            log(`TTS FAILED (${res.status}): ${err.slice(0, 120)}`, "err");
+            return;
+          }
+          const buf = await res.arrayBuffer();
+          log(
+            `TTS OK — received ${buf.byteLength} bytes of audio. Playing…`,
+            "ok",
+          );
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const audio = await ctx.decodeAudioData(buf);
+          const src = ctx.createBufferSource();
+          src.buffer = audio;
+          src.connect(ctx.destination);
+          src.start();
+          src.onended = () => log("TTS playback complete.", "ok");
+        } catch (err) {
+          log(`TTS ERROR: ${err.message}`, "err");
+        }
+      }
+
+      // ── Init log ─────────────────────────────────────────────────────────────
+      const urlId = new URLSearchParams(location.search).get("widget_id");
+      if (urlId) {
+        document.getElementById("widget-id").value = urlId;
+        log(`Widget ID pre-filled from URL: ${urlId}`, "info");
+        loadWidget();
+      }
+      log("Test bench ready. Enter a Widget ID and click Load Widget.", "info");
+      log(
+        "Make sure your Next.js dev server is running at the BASE URL.",
+        "info",
+      );
+    </script>
+  </body>
+</html>

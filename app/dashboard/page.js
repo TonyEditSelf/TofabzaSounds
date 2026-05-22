@@ -13,6 +13,7 @@
 
 import useSWR from "swr";
 import { useUIStore } from "@/store/ui";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 // ─── Fetchers ─────────────────────────────────────────────────────────────────
@@ -139,13 +140,17 @@ function StatCard({ label, value, sub, loading }) {
 }
 
 function CallRow({ call }) {
+  const router = useRouter();
   const dir = call.direction === "inbound" ? "↙" : "↗";
   const color =
     call.direction === "inbound" ? "var(--saffron-500)" : "var(--saffron-500)";
   const date = new Date(call.started_at);
 
   return (
-    <tr style={s.tr}>
+    <tr
+      style={{ ...s.tr, cursor: "pointer" }}
+      onClick={() => router.push(`/dashboard/calls/${call.id}`)}
+    >
       <td style={{ ...s.td, color }}>
         {dir} {call.direction}
       </td>

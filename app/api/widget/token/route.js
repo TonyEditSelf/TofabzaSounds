@@ -75,6 +75,21 @@ export async function POST(req) {
     requestDomain === "localhost" || requestDomain === "127.0.0.1";
 
   if (!isAllowed && !isLocalhost) {
+    // Fire-and-forget email alert
+    try {
+      const { data: widgetFull } = await supabase
+        .from("widgets")
+        .select("name")
+        .eq("id", widget_id)
+        .single();
+      const { sendUnknownDomainEmail } = await import("@/lib/email/client");
+      sendUnknownDomainEmail({
+        widgetName: widgetFull?.name ?? widget_id,
+        origin,
+        dashboardUrl: process.env.NEXTJS_URL ?? "",
+      }).catch(() => {});
+    } catch (_) {}
+
     return Response.json(
       {
         error: {

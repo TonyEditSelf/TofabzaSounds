@@ -12,7 +12,7 @@
  */
 export async function createCallLog(
   supabase,
-  { callSid, agentId, clientId, callerNumber, direction },
+  { callSid, agentId, clientId, callerNumber, direction, campaignId },
 ) {
   try {
     const { data, error } = await supabase
@@ -23,6 +23,7 @@ export async function createCallLog(
         client_id: clientId,
         caller_number: callerNumber,
         direction: direction ?? "inbound",
+        campaign_id: campaignId ?? null,
         status: "in_progress",
         started_at: new Date().toISOString(),
       })
@@ -42,7 +43,11 @@ export async function createCallLog(
  * @param {string|null} callLogId
  * @param {object} params
  */
-export async function updateCallLog(supabase, callLogId, { status, duration }) {
+export async function updateCallLog(
+  supabase,
+  callLogId,
+  { status, duration, transcript },
+) {
   if (!callLogId) return;
   try {
     await supabase
@@ -51,6 +56,7 @@ export async function updateCallLog(supabase, callLogId, { status, duration }) {
         status,
         duration_seconds: duration,
         ended_at: new Date().toISOString(),
+        ...(transcript ? { transcript } : {}),
       })
       .eq("id", callLogId);
   } catch (err) {

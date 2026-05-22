@@ -243,7 +243,6 @@ export default function CampaignsPage() {
     const { data } = await supabase
       .from("clients")
       .select("id, name")
-      .eq("is_active", true)
       .order("name");
     return data ?? [];
   });
