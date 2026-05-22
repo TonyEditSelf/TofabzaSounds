@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { BULBUL_V3_SPEAKERS } from "@/lib/sarvam/voices";
+import { useUIStore } from "@/store/ui";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ function Waveform({ analyserRef, playing }) {
       analyser.getByteTimeDomainData(data);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.beginPath();
-      ctx.strokeStyle = "#2563EB";
+      ctx.strokeStyle = "var(--saffron-500)";
       ctx.lineWidth = 2;
       const sliceW = canvas.width / bufLen;
       let x = 0;
@@ -113,7 +114,7 @@ function Waveform({ analyserRef, playing }) {
               width: "3px",
               borderRadius: "2px",
               height: `${8 + Math.random() * 24}px`,
-              background: playing ? "#2563EB" : "#E2E4EF",
+              background: playing ? "var(--saffron-500)" : "var(--border)",
             }}
           />
         ))}
@@ -134,6 +135,7 @@ function Waveform({ analyserRef, playing }) {
 // ─── Voice Card ───────────────────────────────────────────────────────────────
 
 function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
+  const themeMode = useUIStore((s) => s.themeMode);
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -242,8 +244,9 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
               <span
                 style={{
                   ...s.tag,
-                  background: "rgba(37,99,235,0.08)",
-                  color: "#2563EB",
+                  background: "#1A1A1A",
+                  border: "1px solid #2a2a2a",
+                color: "var(--saffron-500)",
                 }}
               >
                 {voice.style}
@@ -259,6 +262,15 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
             cursor: "pointer",
             fontSize: "18px",
             lineHeight: 1,
+            color: voice.is_favourite
+              ? "var(--saffron-500)"
+              : themeMode === "dark"
+                ? "var(--ink-200)"
+                : "var(--ink-500)",
+            textShadow:
+              voice.is_favourite && themeMode === "dark"
+                ? "0 0 8px rgba(249,115,22,0.35)"
+                : "none",
           }}
           title={voice.is_favourite ? "Remove favourite" : "Add favourite"}
         >
@@ -284,7 +296,7 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
         disabled={loading}
         style={{
           ...s.playBtn,
-          background: playing ? "#16A34A" : "#2563EB",
+          background: playing ? "#16A34A" : "#F97316",
         }}
       >
         {loading ? "Loading…" : playing ? "▶ Playing" : "▶ Preview"}
@@ -429,7 +441,7 @@ export default function VoiceExplorerPage() {
               onClick={() => setSpeed(sp)}
               style={{
                 ...s.speedBtn,
-                background: speed === sp ? "#2563EB" : "transparent",
+                background: speed === sp ? "#F97316" : "transparent",
                 color: speed === sp ? "#fff" : "var(--ink-500)",
               }}
             >
@@ -511,7 +523,7 @@ const s = {
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
     color: "var(--ink-700)",
-    background: "#fff",
+    background: "var(--surface)",
     cursor: "pointer",
     outline: "none",
     minHeight: "40px",
@@ -522,7 +534,7 @@ const s = {
     alignItems: "center",
     flexWrap: "wrap",
     marginBottom: "1.5rem",
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     padding: "0.75rem 1rem",
@@ -553,8 +565,8 @@ const s = {
     gap: "1rem",
   },
   card: {
-    background: "#fff",
-    border: "1px solid var(--border)",
+    background: "#15161A",
+    border: "1px solid #2a2a2a",
     borderRadius: "10px",
     padding: "1.25rem",
     display: "flex",
@@ -572,9 +584,10 @@ const s = {
     fontSize: "9px",
     letterSpacing: "0.08em",
     textTransform: "uppercase",
-    background: "rgba(0,0,0,0.05)",
-    color: "var(--ink-500)",
+    background: "#1A1A1A",
+    color: "var(--ink-400)",
     borderRadius: "4px",
+    border: "1px solid #2a2a2a",
     padding: "2px 6px",
   },
   playBtn: {

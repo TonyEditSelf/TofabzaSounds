@@ -50,7 +50,7 @@ function WidgetPreview({ config }) {
         style={{
           position: "relative",
           height: "420px",
-          background: "#F4F5FA",
+          background: "var(--surface-2)",
           borderRadius: "12px",
           overflow: "hidden",
         }}
@@ -62,9 +62,10 @@ function WidgetPreview({ config }) {
             bottom: "80px",
             right: "16px",
             width: "300px",
-            background: "#fff",
+            background: "var(--surface)",
             borderRadius: "16px",
             boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+            border: "1px solid var(--border)",
             overflow: "hidden",
           }}
         >
@@ -85,11 +86,11 @@ function WidgetPreview({ config }) {
           <div style={{ padding: "16px" }}>
             <div
               style={{
-                background: "#F4F5FA",
+                background: "var(--surface-2)",
                 borderRadius: "12px 12px 12px 0",
                 padding: "10px 14px",
                 fontSize: "0.84rem",
-                color: "#0A0B0F",
+                color: "var(--ink-900)",
                 maxWidth: "80%",
                 lineHeight: 1.5,
               }}
@@ -100,7 +101,7 @@ function WidgetPreview({ config }) {
           {/* Input bar */}
           <div
             style={{
-              borderTop: "1px solid #E2E4EF",
+              borderTop: "1px solid var(--border)",
               padding: "10px 12px",
               display: "flex",
               gap: "8px",
@@ -110,11 +111,11 @@ function WidgetPreview({ config }) {
             <div
               style={{
                 flex: 1,
-                background: "#F4F5FA",
+                background: "var(--surface-2)",
                 borderRadius: "20px",
                 padding: "8px 14px",
                 fontSize: "0.8rem",
-                color: "#9CA3AF",
+                color: "var(--ink-400)",
               }}
             >
               Type a message…
@@ -163,7 +164,7 @@ function WidgetPreview({ config }) {
     return (
       <div
         style={{
-          background: "#F4F5FA",
+          background: "var(--surface-2)",
           borderRadius: "12px",
           overflow: "hidden",
           height: "420px",
@@ -227,7 +228,7 @@ function WidgetPreview({ config }) {
   return (
     <div
       style={{
-        background: "#F4F5FA",
+        background: "var(--surface-2)",
         borderRadius: "12px",
         padding: "16px",
         height: "420px",
@@ -235,10 +236,11 @@ function WidgetPreview({ config }) {
     >
       <div
         style={{
-          background: "#fff",
+          background: "var(--surface)",
           borderRadius: "12px",
           overflow: "hidden",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          boxShadow: "var(--shadow-soft)",
+          border: "1px solid var(--border)",
         }}
       >
         <div style={{ background: accentColor, padding: "14px 16px" }}>
@@ -249,7 +251,7 @@ function WidgetPreview({ config }) {
         <div style={{ padding: "16px", minHeight: "200px" }}>
           <div
             style={{
-              background: "#F4F5FA",
+              background: "var(--surface-2)",
               borderRadius: "12px 12px 12px 0",
               padding: "10px 14px",
               fontSize: "0.84rem",
@@ -261,7 +263,7 @@ function WidgetPreview({ config }) {
         </div>
         <div
           style={{
-            borderTop: "1px solid #E2E4EF",
+            borderTop: "1px solid var(--border)",
             padding: "10px 12px",
             display: "flex",
             gap: "8px",
@@ -270,11 +272,11 @@ function WidgetPreview({ config }) {
           <div
             style={{
               flex: 1,
-              background: "#F4F5FA",
+              background: "var(--surface-2)",
               borderRadius: "20px",
               padding: "8px 14px",
               fontSize: "0.8rem",
-              color: "#9CA3AF",
+              color: "var(--ink-400)",
             }}
           >
             Type a message…
@@ -308,7 +310,7 @@ const DEFAULTS = {
   name: "",
   language: "ml-IN",
   style: "bubble",
-  accentColor: "#2563EB",
+  accentColor: "#F97316",
   greeting: "",
 };
 
@@ -370,7 +372,7 @@ export default function NewWidgetPage() {
 
   const previewConfig = {
     style: form.style ?? "bubble",
-    accentColor: form.accentColor ?? "#2563EB",
+    accentColor: form.accentColor ?? "#F97316",
     greeting: form.greeting ?? "",
     name: form.name ?? "",
   };
@@ -453,9 +455,9 @@ export default function NewWidgetPage() {
               ...s.mobileTabBtn,
               borderBottom:
                 mobileTab === tab
-                  ? "2px solid #2563EB"
+                  ? "2px solid #F97316"
                   : "2px solid transparent",
-              color: mobileTab === tab ? "#2563EB" : "var(--ink-400)",
+              color: mobileTab === tab ? "#F97316" : "var(--ink-400)",
             }}
           >
             {tab === "form" ? "Configure" : "Preview"}
@@ -522,7 +524,7 @@ const s = {
     alignItems: "start",
   },
   formPanel: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     padding: "1.5rem",
@@ -560,6 +562,7 @@ const s = {
   input: {
     border: "1px solid var(--border)",
     borderRadius: "6px",
+    background: "var(--surface)",
     padding: "8px 10px",
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
@@ -578,7 +581,7 @@ const s = {
     color: "var(--ink-900)",
     outline: "none",
     minHeight: "36px",
-    background: "#fff",
+    background: "var(--surface)",
     cursor: "pointer",
     width: "100%",
   },
@@ -595,7 +598,7 @@ const s = {
   },
   hint: { fontSize: "0.75rem", color: "var(--ink-400)", margin: 0 },
   btnPrimary: {
-    background: "#2563EB",
+    background: "#F97316",
     color: "#fff",
     border: "none",
     borderRadius: "7px",

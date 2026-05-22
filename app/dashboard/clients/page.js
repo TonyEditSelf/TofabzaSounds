@@ -74,7 +74,7 @@ function AddClientForm({ onSuccess, onCancel }) {
   }
 
   return (
-    <tr style={{ background: "rgba(37,99,235,0.03)" }}>
+    <tr style={{ background: "var(--surface-2)" }}>
       <td style={s.td}>
         <input
           autoFocus
@@ -295,7 +295,7 @@ export default function ClientsPage() {
                   style={{ ...s.tr, cursor: "pointer" }}
                   onClick={() => router.push(`/dashboard/clients/${c.id}`)}
                   onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "#F8F9FF")
+                    (e.currentTarget.style.background = "var(--surface-2)")
                   }
                   onMouseLeave={(e) =>
                     (e.currentTarget.style.background = "transparent")
@@ -380,7 +380,7 @@ const s = {
     margin: 0,
   },
   tableWrap: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     overflowX: "auto",
@@ -413,6 +413,7 @@ const s = {
     width: "100%",
     border: "1px solid var(--border)",
     borderRadius: "6px",
+    background: "var(--surface)",
     padding: "6px 10px",
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
@@ -422,7 +423,7 @@ const s = {
     boxSizing: "border-box",
   },
   btnPrimary: {
-    background: "var(--cobalt-600, #2563EB)",
+    background: "var(--saffron-500, #F97316)",
     color: "#fff",
     border: "none",
     borderRadius: "7px",
@@ -457,7 +458,7 @@ const s = {
     transition: "all 0.15s",
   },
   deleteBox: {
-    background: "#FFF1F2",
+    background: "var(--surface-2)",
     border: "1px solid rgba(225,29,72,0.2)",
     borderRadius: "8px",
     padding: "1rem 1.25rem",

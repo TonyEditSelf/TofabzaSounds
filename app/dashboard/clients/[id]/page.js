@@ -161,7 +161,7 @@ function StatusBadge({ status }) {
       : status === "inactive"
         ? "#9CA3AF"
         : status === "completed"
-          ? "#2563EB"
+          ? "#F97316"
           : "#9CA3AF";
   return (
     <span style={{ fontSize: "0.75rem", fontWeight: 500, color }}>
@@ -461,11 +461,11 @@ export default function ClientDetailPage({ params }) {
               ...s.tabBtn,
               color:
                 activeTab === tab
-                  ? "var(--cobalt-600, #2563EB)"
+                  ? "var(--saffron-500, #F97316)"
                   : "var(--ink-400)",
               borderBottom:
                 activeTab === tab
-                  ? "2px solid var(--cobalt-600, #2563EB)"
+                  ? "2px solid var(--saffron-500, #F97316)"
                   : "2px solid transparent",
               fontWeight: activeTab === tab ? 500 : 400,
             }}
@@ -511,7 +511,7 @@ const s = {
     margin: 0,
   },
   editForm: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     padding: "1.25rem",
@@ -562,7 +562,7 @@ const s = {
     minHeight: "44px",
   },
   tableWrap: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     overflowX: "auto",
@@ -603,7 +603,7 @@ const s = {
     color: "var(--ink-900)",
   },
   btnPrimary: {
-    background: "var(--cobalt-600, #2563EB)",
+    background: "var(--saffron-500, #F97316)",
     color: "#fff",
     border: "none",
     borderRadius: "7px",

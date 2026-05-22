@@ -7,6 +7,7 @@
  * State managed here:
  *  - Sidebar open/collapsed (mobile hamburger)
  *  - Active client filter (All Clients or a specific client UUID)
+ *  - Dashboard content theme (light/dark on the right panel only)
  */
 
 import { create } from "zustand";
@@ -17,8 +18,10 @@ import { persist } from "zustand/middleware";
  * @property {boolean}       sidebarOpen       - Mobile: hamburger open state
  * @property {string|null}   activeClientId    - null = "All Clients"
  * @property {string}        activeClientName  - Display name for the filter label
+ * @property {"light"|"dark"} themeMode
  * @property {() => void}    toggleSidebar
  * @property {() => void}    closeSidebar
+ * @property {() => void}    toggleThemeMode
  * @property {(id: string|null, name: string) => void} setClientFilter
  * @property {() => void}    clearClientFilter
  */
@@ -33,6 +36,12 @@ export const useUIStore = create(
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
       closeSidebar: () => set({ sidebarOpen: false }),
+
+      // ── Theme (right panel only) ──────────────────────────────────────────
+      themeMode: "light",
+
+      toggleThemeMode: () =>
+        set((s) => ({ themeMode: s.themeMode === "dark" ? "light" : "dark" })),
 
       // ── Client filter ──────────────────────────────────────────────────────
       // Persisted so the selected client survives page navigation
@@ -64,6 +73,7 @@ export const useUIStore = create(
         // only persist client filter, not sidebar state
         activeClientId: s.activeClientId,
         activeClientName: s.activeClientName,
+        themeMode: s.themeMode,
       }),
     },
   ),

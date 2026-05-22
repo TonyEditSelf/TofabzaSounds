@@ -49,6 +49,8 @@ export default function Sidebar() {
   // Zustand
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const closeSidebar = useUIStore((s) => s.closeSidebar);
+  const themeMode = useUIStore((s) => s.themeMode);
+  const toggleThemeMode = useUIStore((s) => s.toggleThemeMode);
   const activeClientId = useUIStore((s) => s.activeClientId);
   const activeClientName = useUIStore((s) => s.activeClientName);
   const setClientFilter = useUIStore((s) => s.setClientFilter);
@@ -117,8 +119,33 @@ export default function Sidebar() {
       >
         {/* Logo */}
         <div style={s.logoWrap}>
-          <div style={s.logoTitle}>Tofabza Sounds</div>
-          <div style={s.logoSub}>Agency Console</div>
+          <div style={s.logoRow}>
+            <div>
+              <div style={s.logoTitle}>Tofabza Sounds</div>
+              <div style={s.logoSub}>Agency Console</div>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleThemeMode}
+              aria-label={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+              aria-pressed={themeMode === "dark"}
+              style={s.themeToggle}
+            >
+              <span style={s.themeToggleTrack}>
+                <span
+                  style={{
+                    ...s.themeToggleThumb,
+                    transform:
+                      themeMode === "dark" ? "translateX(16px)" : "translateX(0)",
+                  }}
+                />
+              </span>
+              <span style={s.themeToggleLabel}>
+                {themeMode === "dark" ? "Dark" : "Light"}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Client filter */}
@@ -223,6 +250,12 @@ const s = {
     padding: "1.5rem 1.25rem 1rem",
     borderBottom: "1px solid rgba(255,255,255,0.07)",
   },
+  logoRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "12px",
+  },
   logoTitle: {
     fontFamily: "var(--font-serif)",
     fontSize: "1.1rem",
@@ -236,6 +269,46 @@ const s = {
     letterSpacing: "0.12em",
     textTransform: "uppercase",
     color: "var(--saffron-400)",
+  },
+  themeToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    borderRadius: "999px",
+    background: "rgba(255,255,255,0.05)",
+    color: "rgba(255,255,255,0.8)",
+    padding: "6px 10px 6px 8px",
+    cursor: "pointer",
+    minHeight: "34px",
+    fontFamily: "var(--font-sans)",
+    fontSize: "0.72rem",
+    transition: "all 0.15s ease",
+  },
+  themeToggleTrack: {
+    position: "relative",
+    width: "34px",
+    height: "18px",
+    borderRadius: "999px",
+    background: "rgba(255,255,255,0.12)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    display: "inline-block",
+    flexShrink: 0,
+  },
+  themeToggleThumb: {
+    position: "absolute",
+    top: "1px",
+    left: "1px",
+    width: "14px",
+    height: "14px",
+    borderRadius: "50%",
+    background: "#fff",
+    boxShadow: "0 2px 6px rgba(0,0,0,0.28)",
+    transition: "transform 0.18s ease",
+  },
+  themeToggleLabel: {
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   },
   filterWrap: {
     padding: "0.75rem 1rem",

@@ -108,7 +108,7 @@ export default function AgentsPage() {
                   style={{ ...s.tr, cursor: "pointer" }}
                   onClick={() => router.push(`/dashboard/agents/${a.id}`)}
                   onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = "#F8F9FF")
+                    (e.currentTarget.style.background = "var(--surface-2)")
                   }
                   onMouseLeave={(e) =>
                     (e.currentTarget.style.background = "transparent")
@@ -152,9 +152,9 @@ export default function AgentsPage() {
                         borderRadius: "4px",
                         background:
                           a.type === "inbound"
-                            ? "rgba(37,99,235,0.08)"
+                            ? "rgba(249,115,22,0.08)"
                             : "rgba(249,115,22,0.08)",
-                        color: a.type === "inbound" ? "#2563EB" : "#F97316",
+                        color: "#F97316",
                       }}
                     >
                       {a.type}
@@ -211,7 +211,7 @@ const s = {
     margin: 0,
   },
   btnPrimary: {
-    background: "#2563EB",
+    background: "#F97316",
     color: "#fff",
     border: "none",
     borderRadius: "7px",
@@ -223,7 +223,7 @@ const s = {
     fontFamily: "var(--font-sans)",
   },
   tableWrap: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     overflowX: "auto",

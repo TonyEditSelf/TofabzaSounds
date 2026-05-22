@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * app/dashboard/widgets/[id]/page.js
+ * app/dashboard/agents/[id]/page.js
  *
  * Sections:
- *  1. Header — name + status toggle + delete
- *  2. Config form — same fields as /new
- *  3. Knowledge Base — upload + list KBs
- *  4. Embed Code — copy-paste snippet
+ *  1. Header — name + type badge + status badge + save
+ *  2. Config — language, voice, LLM, Exotel number, system prompt (8000 chars)
+ *  3. Knowledge Base
+ *  4. Webhook URL — copy for Exotel
+ *  5. Danger zone — delete
  */
 
 import { useState, use, useEffect } from "react";
@@ -22,25 +23,14 @@ const supabase = createClient();
 
 // ─── Fetchers ─────────────────────────────────────────────────────────────────
 
-async function fetchWidget(id) {
+async function fetchAgent(id) {
   const { data, error } = await supabase
-    .from("widgets")
+    .from("agents")
     .select("*, clients(name)")
     .eq("id", id)
     .single();
   if (error) throw error;
   return data;
-}
-
-async function fetchKBs(id) {
-  const { data, error } = await supabase
-    .from("knowledge_bases")
-    .select("id, name, created_at, kb_chunks(count)")
-    .eq("owner_id", id)
-    .eq("owner_type", "widget")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
 }
 
 async function fetchClients() {
@@ -51,15 +41,25 @@ async function fetchClients() {
   return data ?? [];
 }
 
+async function fetchKBs(id) {
+  const { data, error } = await supabase
+    .from("knowledge_bases")
+    .select("id, name, created_at, kb_chunks(count)")
+    .eq("owner_id", id)
+    .eq("owner_type", "agent")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 // ─── Knowledge Base Section ───────────────────────────────────────────────────
 
-function KnowledgeBaseSection({ widgetId, clientId }) {
+function KnowledgeBaseSection({ agentId, clientId }) {
   const [uploading, setUploading] = useState(false);
   const [kbName, setKbName] = useState("");
   const [deleting, setDeleting] = useState(null);
-
-  const { data: kbs = [], mutate } = useSWR(`kbs:${widgetId}`, () =>
-    fetchKBs(widgetId),
+  const { data: kbs = [], mutate } = useSWR(`kbs-agent:${agentId}`, () =>
+    fetchKBs(agentId),
   );
 
   async function handleUpload(e) {
@@ -70,19 +70,19 @@ function KnowledgeBaseSection({ widgetId, clientId }) {
       return;
     }
     if (!kbName.trim()) {
-      toast.error("Enter a name for this knowledge base.");
+      toast.error("Enter a KB name first.");
       return;
     }
     if (kbs.length >= 5) {
-      toast.error("Maximum 5 knowledge bases per widget?.");
+      toast.error("Maximum 5 knowledge bases per agent.");
       return;
     }
 
     setUploading(true);
     const form = new FormData();
     form.append("file", file);
-    form.append("owner_type", "widget");
-    form.append("owner_id", widgetId);
+    form.append("owner_type", "agent");
+    form.append("owner_id", agentId);
     form.append("client_id", clientId);
     form.append("name", kbName.trim());
 
@@ -116,11 +116,9 @@ function KnowledgeBaseSection({ widgetId, clientId }) {
     <div style={s.section}>
       <h2 style={s.sectionTitle}>Knowledge Base</h2>
       <p style={s.hint}>
-        Upload documents your assistant can reference when answering questions.
-        PDF, TXT, MD, DOCX — max 10MB each.
+        Upload documents the agent can reference during calls. PDF, TXT, MD,
+        DOCX — max 10MB.
       </p>
-
-      {/* Upload row */}
       <div
         style={{
           display: "flex",
@@ -133,7 +131,7 @@ function KnowledgeBaseSection({ widgetId, clientId }) {
         <input
           value={kbName}
           onChange={(e) => setKbName(e.target.value)}
-          placeholder="KB name (e.g. Product FAQ)"
+          placeholder="KB name"
           style={{ ...s.input, flex: 1, minWidth: "160px" }}
         />
         <label
@@ -156,8 +154,6 @@ function KnowledgeBaseSection({ widgetId, clientId }) {
           />
         </label>
       </div>
-
-      {/* KB list */}
       {kbs.length === 0 ? (
         <p style={{ ...s.hint, fontStyle: "italic" }}>
           No knowledge bases yet.
@@ -214,43 +210,48 @@ function KnowledgeBaseSection({ widgetId, clientId }) {
   );
 }
 
-// ─── Embed Code Section ───────────────────────────────────────────────────────
+// ─── Webhook Section ──────────────────────────────────────────────────────────
 
-function EmbedCodeSection({ widgetId }) {
-  const snippet = `<!-- Tofabza Sounds Widget -->
-<script>
-  (function(w,d,s,id){
-    w.TofabzaWidgetId = id;
-    var js = d.createElement(s);
-    js.src = '${typeof window !== "undefined" ? window.location.origin : ""}/widget/v1/embed.js';
-    js.async = true;
-    d.head.appendChild(js);
-  })(window, document, 'script', '${widgetId}');
-</script>`;
+function WebhookSection({ agentId, agentType }) {
+  const webhookUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/api/webhooks/exotel/${agentId}`;
 
   function handleCopy() {
-    navigator.clipboard.writeText(snippet);
-    toast.success("Embed code copied.");
+    navigator.clipboard.writeText(webhookUrl);
+    toast.success("Webhook URL copied.");
   }
 
   return (
     <div style={s.section}>
-      <h2 style={s.sectionTitle}>Embed Code</h2>
+      <h2 style={s.sectionTitle}>Exotel Webhook</h2>
       <p style={s.hint}>
-        Paste this snippet before the closing <code>&lt;/body&gt;</code> tag on
-        your website.
+        {agentType === "inbound"
+          ? "Set this URL in Exotel → App → Passthru App → URL field for your inbound number."
+          : "Set this URL in Exotel → Campaigns → Webhook URL field."}
       </p>
-      <pre style={s.code}>{snippet}</pre>
-      <button onClick={handleCopy} style={s.btnPrimary}>
-        Copy Code
-      </button>
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <code style={s.code}>{webhookUrl}</code>
+        <button onClick={handleCopy} style={s.btnPrimary}>
+          Copy
+        </button>
+      </div>
+      <p style={{ ...s.hint, marginTop: "0.75rem" }}>
+        ⚠️ Railway telephony server must be running and NEXTJS_URL env var set
+        for webhooks to work.
+      </p>
     </div>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function WidgetDetailPage({ params }) {
+export default function AgentDetailPage({ params }) {
   const { id } = use(params);
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -258,10 +259,10 @@ export default function WidgetDetailPage({ params }) {
   const [confirmName, setConfirmName] = useState("");
 
   const {
-    data: widget,
+    data: agent,
     isLoading,
     mutate,
-  } = useSWR(`widget:${id}`, () => fetchWidget(id));
+  } = useSWR(`agent:${id}`, () => fetchAgent(id));
   const { data: clients = [] } = useSWR("clients-list", fetchClients, {
     revalidateOnFocus: false,
   });
@@ -269,54 +270,43 @@ export default function WidgetDetailPage({ params }) {
   const [form, setForm] = useState({
     client_id: "",
     name: "",
-    voice_id: "anand",
     language: "ml-IN",
+    voice_id: "anand",
+    llm_provider: "gemini-flash",
     system_prompt: "",
     greeting: "",
-    style: "bubble",
-    accentColor: "#F97316",
-    llm_provider: "gemini-flash",
-    domains: "",
+    exotel_number: "",
+    max_call_duration: 300,
   });
 
-  // Initialise form once widget loads
   useEffect(() => {
-    if (widget) {
-      const cfg = widget?.config ?? {};
+    if (agent) {
+      const cfg = agent.config ?? {};
       setForm({
-        client_id: widget?.client_id,
-        name: widget?.name,
+        client_id: agent.client_id ?? "",
+        name: agent.name ?? "",
+        language: agent.language ?? "ml-IN",
         voice_id: cfg.voice_id ?? "anand",
-        language: cfg.language ?? "ml-IN",
+        llm_provider: cfg.llm_provider ?? "gemini-flash",
         system_prompt: cfg.system_prompt ?? "",
         greeting: cfg.greeting ?? "",
-        style: cfg.style ?? "bubble",
-        accentColor: cfg.accentColor ?? "#F97316",
-        llm_provider: cfg.llm_provider ?? "gemini-flash",
-        domains: (widget?.allowed_domains ?? []).join(", "),
+        exotel_number: cfg.exotel_number ?? "",
+        max_call_duration: cfg.max_call_duration ?? 300,
       });
     }
-  }, [widget]);
+  }, [agent]);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  function parseDomains(raw) {
-    return raw
-      .split(",")
-      .map((d) => d.trim().toLowerCase())
-      .filter((d) => d && d !== "*");
-  }
-
   async function handleSave() {
     if (!form.name.trim()) {
-      toast.error("Widget name is required.");
+      toast.error("Agent name is required.");
       return;
     }
-    const domains = parseDomains(form.domains);
-    if (domains.length === 0) {
-      toast.error("Add at least one allowed domain.");
+    if (!form.system_prompt.trim()) {
+      toast.error("System prompt is required.");
       return;
     }
     if (form.system_prompt.length > 8000) {
@@ -326,92 +316,71 @@ export default function WidgetDetailPage({ params }) {
 
     const isComplete = !!(
       form.system_prompt.trim() &&
-      domains.length > 0 &&
-      form.voice_id &&
-      form.language
+      form.language &&
+      form.voice_id
     );
 
     setSaving(true);
     const { error } = await supabase
-      .from("widgets")
+      .from("agents")
       .update({
         client_id: form.client_id,
         name: form.name.trim(),
-        allowed_domains: domains,
+        language: form.language,
         status: isComplete ? "active" : "inactive",
         config: {
           voice_id: form.voice_id,
-          language: form.language,
+          llm_provider: form.llm_provider,
           system_prompt: form.system_prompt.trim(),
           greeting: form.greeting.trim(),
-          style: form.style,
-          accentColor: form.accentColor,
-          llm_provider: form.llm_provider,
+          exotel_number: form.exotel_number.trim(),
+          max_call_duration: Number(form.max_call_duration),
         },
       })
       .eq("id", id);
     setSaving(false);
 
     if (error) {
-      toast.error("Save failed.");
+      toast.error(error.message ?? "Save failed.");
       return;
     }
     toast.success(
       isComplete
-        ? "Widget saved and activated!"
-        : "Widget saved. Add system prompt and domain to activate.",
+        ? "Agent saved and activated!"
+        : "Agent saved. Add system prompt to activate.",
     );
     mutate();
   }
 
   async function handleDelete() {
-    if (confirmName !== widget?.name) {
+    if (confirmName !== agent?.name) {
       toast.error("Name doesn't match.");
       return;
     }
     setDeleting(true);
-    const { error } = await supabase.from("widgets").delete().eq("id", id);
+    const { error } = await supabase.from("agents").delete().eq("id", id);
     setDeleting(false);
     if (error) {
       toast.error("Delete failed.");
       return;
     }
-    toast.success("Widget deleted.");
-    router.push("/dashboard/widgets");
+    toast.success("Agent deleted.");
+    router.push("/dashboard/agents");
   }
 
-  if (isLoading || !widget || !form || !form.accentColor) {
+  if (isLoading) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <div style={{ ...s.skeleton, width: "200px", height: "32px" }} />
-        <div style={{ ...s.skeleton, width: "100%", height: "200px" }} />
+        <div style={{ ...s.skeleton, width: "100%", height: "300px" }} />
       </div>
     );
   }
 
-  if (!widget) return <p style={s.hint}>Widget not found.</p>;
+  if (!agent) return <p style={s.hint}>Agent not found.</p>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-      {/* Setup banner */}
-      {widget?.status === "inactive" && !form.system_prompt && (
-        <div
-          style={{
-            background: "rgba(249,115,22,0.08)",
-            border: "1px solid rgba(249,115,22,0.2)",
-            borderRadius: "10px",
-            padding: "1rem 1.25rem",
-            fontSize: "0.84rem",
-            color: "var(--saffron-500)",
-          }}
-        >
-          👋 Widget created! Add instructions below, upload a knowledge base,
-          set your domain, then click <strong>Save</strong> and toggle to{" "}
-          <strong>Active</strong>.
-        </div>
-      )}
-
-      {/* Header */}
       {/* Header */}
       <div
         style={{
@@ -422,7 +391,7 @@ export default function WidgetDetailPage({ params }) {
         }}
       >
         <div style={{ flex: 1 }}>
-          <h1 style={s.pageTitle}>{widget?.name}</h1>
+          <h1 style={s.pageTitle}>{agent.name}</h1>
           <p
             style={{
               fontFamily: "var(--font-mono)",
@@ -435,6 +404,7 @@ export default function WidgetDetailPage({ params }) {
             ID: {id}
           </p>
         </div>
+        {/* Type badge */}
         <span
           style={{
             fontFamily: "var(--font-mono)",
@@ -444,28 +414,65 @@ export default function WidgetDetailPage({ params }) {
             padding: "4px 10px",
             borderRadius: "20px",
             background:
-              widget?.status === "active"
-                ? "rgba(22,163,74,0.1)"
-                : "rgba(0,0,0,0.05)",
-            color: widget?.status === "active" ? "#16A34A" : "#9CA3AF",
+              agent.type === "inbound"
+                ? "rgba(37,99,235,0.1)"
+                : "rgba(249,115,22,0.1)",
+            color: agent.type === "inbound" ? "#2563EB" : "#F97316",
             border:
-              widget?.status === "active"
-                ? "1px solid rgba(22,163,74,0.3)"
-                : "1px solid #E5E7EB",
+              agent.type === "inbound"
+                ? "1px solid rgba(37,99,235,0.3)"
+                : "1px solid rgba(249,115,22,0.3)",
           }}
         >
-          {widget?.status === "active" ? "● Active" : "○ Inactive"}
+          {agent.type === "inbound" ? "↙ Inbound" : "↗ Outbound"}
         </span>
-
+        {/* Status badge */}
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "10px",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            padding: "4px 10px",
+            borderRadius: "20px",
+            background:
+              agent.status === "active"
+                ? "rgba(22,163,74,0.1)"
+                : "rgba(0,0,0,0.05)",
+            color: agent.status === "active" ? "#16A34A" : "var(--ink-400)",
+            border:
+              agent.status === "active"
+                ? "1px solid rgba(22,163,74,0.3)"
+                : "1px solid var(--border)",
+          }}
+        >
+          {agent.status === "active" ? "● Active" : "○ Inactive"}
+        </span>
         <button onClick={handleSave} disabled={saving} style={s.btnPrimary}>
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
 
-      {/* Config form */}
+      {/* Setup banner */}
+      {agent.status === "inactive" && !form.system_prompt && (
+        <div
+          style={{
+            background: "rgba(37,99,235,0.06)",
+            border: "1px solid rgba(37,99,235,0.2)",
+            borderRadius: "10px",
+            padding: "1rem 1.25rem",
+            fontSize: "0.84rem",
+            color: "#2563EB",
+          }}
+        >
+          👋 Agent created! Add a system prompt, configure voice and language,
+          then click <strong>Save</strong> to activate.
+        </div>
+      )}
+
+      {/* Config */}
       <div style={s.section}>
         <h2 style={s.sectionTitle}>Configuration</h2>
-
         <div
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
@@ -487,7 +494,7 @@ export default function WidgetDetailPage({ params }) {
 
           {/* Name */}
           <div style={s.field}>
-            <label style={s.label}>Widget Name *</label>
+            <label style={s.label}>Agent Name *</label>
             <input
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
@@ -533,7 +540,7 @@ export default function WidgetDetailPage({ params }) {
             </div>
           </div>
 
-          {/* LLM Provider */}
+          {/* LLM */}
           <div style={s.field}>
             <label style={s.label}>AI Model</label>
             <select
@@ -550,10 +557,50 @@ export default function WidgetDetailPage({ params }) {
             </select>
           </div>
 
+          {/* Exotel number */}
+          <div style={s.field}>
+            <label style={s.label}>
+              Exotel Number{" "}
+              {agent.type === "inbound"
+                ? "(number that rings this agent)"
+                : "(caller ID for outbound)"}
+            </label>
+            <input
+              value={form.exotel_number}
+              onChange={(e) => set("exotel_number", e.target.value)}
+              placeholder="e.g. 08088919191"
+              style={s.input}
+            />
+          </div>
+
+          {/* Max call duration */}
+          <div style={s.field}>
+            <label style={s.label}>Max Call Duration (seconds)</label>
+            <input
+              type="number"
+              value={form.max_call_duration}
+              onChange={(e) => set("max_call_duration", e.target.value)}
+              min={30}
+              max={1800}
+              style={{ ...s.input, width: "140px" }}
+            />
+          </div>
+
+          {/* Greeting */}
+          <div style={s.field}>
+            <label style={s.label}>Greeting (first thing agent says)</label>
+            <input
+              value={form.greeting}
+              onChange={(e) => set("greeting", e.target.value)}
+              placeholder="Hello, welcome to…"
+              style={s.input}
+            />
+          </div>
+
           {/* System prompt */}
           <div style={s.field}>
             <label style={s.label}>
-              What should your assistant do?
+              What should this agent do? *
               <span style={{ float: "right", fontWeight: 400 }}>
                 {form.system_prompt.length}/8000
               </span>
@@ -562,7 +609,8 @@ export default function WidgetDetailPage({ params }) {
               value={form.system_prompt}
               onChange={(e) => set("system_prompt", e.target.value)}
               maxLength={8000}
-              rows={6}
+              rows={8}
+              placeholder="You are a helpful voice assistant for [company]. Your job is to…"
               style={{
                 ...s.input,
                 resize: "vertical",
@@ -571,112 +619,36 @@ export default function WidgetDetailPage({ params }) {
               }}
             />
           </div>
-
-          {/* Greeting */}
-          <div style={s.field}>
-            <label style={s.label}>Greeting Message</label>
-            <input
-              value={form.greeting}
-              onChange={(e) => set("greeting", e.target.value)}
-              style={s.input}
-            />
-          </div>
-
-          {/* Style */}
-          <div style={s.field}>
-            <label style={s.label}>Widget Style</label>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {["bubble", "bar", "inline"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => set("style", st)}
-                  style={{
-                    ...s.styleBtn,
-                    background: form.style === st ? "#F97316" : "#fff",
-                    color: form.style === st ? "#fff" : "var(--ink-600)",
-                    borderColor:
-                      form.style === st ? "#F97316" : "var(--border)",
-                  }}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Accent colour */}
-          <div style={s.field}>
-            <label style={s.label}>Accent Colour</label>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <input
-                type="color"
-                value={form.accentColor}
-                onChange={(e) => set("accentColor", e.target.value)}
-                style={{
-                  width: "44px",
-                  height: "44px",
-                  border: "none",
-                  background: "none",
-                  cursor: "pointer",
-                  padding: 0,
-                }}
-              />
-              <input
-                value={form.accentColor}
-                onChange={(e) => set("accentColor", e.target.value)}
-                style={{ ...s.input, width: "110px" }}
-              />
-            </div>
-          </div>
-
-          {/* Domains */}
-          <div style={s.field}>
-            <label style={s.label}>
-              Allowed Domains *{" "}
-              <span style={{ fontWeight: 400, color: "var(--ink-400)" }}>
-                (comma-separated)
-              </span>
-            </label>
-            <input
-              value={form.domains}
-              onChange={(e) => set("domains", e.target.value)}
-              placeholder="example.com, app.example.com"
-              style={s.input}
-            />
-          </div>
         </div>
       </div>
 
       {/* Knowledge Base */}
-      <KnowledgeBaseSection widgetId={id} clientId={widget?.client_id} />
+      <KnowledgeBaseSection agentId={id} clientId={agent.client_id} />
 
-      {/* Embed Code */}
-      <EmbedCodeSection widgetId={id} />
+      {/* Webhook */}
+      <WebhookSection agentId={id} agentType={agent.type} />
 
       {/* Danger zone */}
       <div style={{ ...s.section, borderColor: "rgba(225,29,72,0.2)" }}>
         <h2 style={{ ...s.sectionTitle, color: "#E11D48" }}>Danger Zone</h2>
-        <p style={s.hint}>
-          Type the widget name to confirm deletion. This will delete all
-          sessions and knowledge bases.
-        </p>
+        <p style={s.hint}>Type the agent name to confirm deletion.</p>
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           <input
             value={confirmName}
             onChange={(e) => setConfirmName(e.target.value)}
-            placeholder={widget?.name}
+            placeholder={agent.name}
             style={{ ...s.input, width: "220px" }}
           />
           <button
             onClick={handleDelete}
-            disabled={deleting || confirmName !== widget?.name}
+            disabled={deleting || confirmName !== agent.name}
             style={{
               ...s.btnPrimary,
               background: "#E11D48",
-              opacity: confirmName !== widget?.name ? 0.4 : 1,
+              opacity: confirmName !== agent.name ? 0.4 : 1,
             }}
           >
-            {deleting ? "Deleting…" : "Delete Widget"}
+            {deleting ? "Deleting…" : "Delete Agent"}
           </button>
         </div>
       </div>
@@ -686,7 +658,7 @@ export default function WidgetDetailPage({ params }) {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Styles — all CSS vars for dark/light support ─────────────────────────────
 
 const s = {
   pageTitle: {
@@ -725,6 +697,7 @@ const s = {
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
     color: "var(--ink-900)",
+    background: "var(--surface)",
     outline: "none",
     minHeight: "36px",
     width: "100%",
@@ -737,37 +710,23 @@ const s = {
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
     color: "var(--ink-900)",
+    background: "var(--surface)",
     outline: "none",
     minHeight: "36px",
-    background: "var(--surface)",
     cursor: "pointer",
     width: "100%",
   },
-  styleBtn: {
-    border: "1px solid",
-    borderRadius: "7px",
-    padding: "8px 16px",
-    fontSize: "0.84rem",
-    cursor: "pointer",
-    fontFamily: "var(--font-sans)",
-    minHeight: "40px",
-    textTransform: "capitalize",
-    transition: "all 0.1s",
-  },
   hint: { fontSize: "0.78rem", color: "var(--ink-400)", margin: "0 0 0.75rem" },
   code: {
-    background: "var(--surface)",
+    background: "var(--surface-2)",
     border: "1px solid var(--border)",
-    borderRadius: "8px",
-    padding: "1rem",
+    borderRadius: "6px",
+    padding: "8px 12px",
     fontSize: "0.78rem",
     fontFamily: "var(--font-mono)",
-    color: "var(--ink-900)",
-    lineHeight: 1.6,
-    overflowX: "auto",
-    margin: "0 0 1rem",
-    whiteSpace: "pre-wrap",
+    color: "var(--ink-700)",
     wordBreak: "break-all",
+    flex: 1,
   },
   kbRow: {
     display: "flex",
@@ -779,7 +738,7 @@ const s = {
     padding: "10px 14px",
   },
   btnPrimary: {
-    background: "#F97316",
+    background: "#2563EB",
     color: "#fff",
     border: "none",
     borderRadius: "7px",
@@ -814,7 +773,7 @@ const s = {
     transition: "all 0.15s",
   },
   skeleton: {
-    background: "var(--border, #E2E4EF)",
+    background: "var(--border)",
     borderRadius: "4px",
     animation: "pulse 1.4s ease-in-out infinite",
   },

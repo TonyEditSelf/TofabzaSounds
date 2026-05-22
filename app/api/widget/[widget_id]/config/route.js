@@ -30,7 +30,7 @@ export async function GET(req, { params }) {
     name: data.name,
     greeting: data.config?.greeting ?? "",
     style: data.config?.style ?? "bubble",
-    accentColor: data.config?.accentColor ?? "#2563EB",
+    accentColor: data.config?.accentColor ?? "#F97316",
     language: data.config?.language ?? "ml-IN",
     voice_id: data.config?.voice_id ?? "anand",
   });

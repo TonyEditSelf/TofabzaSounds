@@ -141,7 +141,7 @@ function StatCard({ label, value, sub, loading }) {
 function CallRow({ call }) {
   const dir = call.direction === "inbound" ? "↙" : "↗";
   const color =
-    call.direction === "inbound" ? "var(--cobalt-600)" : "var(--saffron-500)";
+    call.direction === "inbound" ? "var(--saffron-500)" : "var(--saffron-500)";
   const date = new Date(call.started_at);
 
   return (
@@ -317,9 +317,9 @@ const s = {
     fontSize: "10px",
     letterSpacing: "0.1em",
     textTransform: "uppercase",
-    background: "rgba(37,99,235,0.08)",
-    color: "var(--cobalt-600)",
-    border: "1px solid rgba(37,99,235,0.2)",
+    background: "rgba(249,115,22,0.10)",
+    color: "var(--saffron-500)",
+    border: "1px solid rgba(249,115,22,0.2)",
     borderRadius: "5px",
     padding: "3px 8px",
   },
@@ -330,7 +330,7 @@ const s = {
     marginBottom: "2rem",
   },
   card: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     padding: "1.25rem",
@@ -358,7 +358,7 @@ const s = {
     margin: 0,
   },
   section: {
-    background: "#fff",
+    background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: "10px",
     overflow: "hidden",
