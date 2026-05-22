@@ -1,0 +1,21 @@
+{
+  "name": "tofabza-telephony-server",
+  "version": "1.0.0",
+  "description": "Tofabza Sounds — Railway telephony server for Exotel AgentStream",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "form-data": "^4.0.1",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
