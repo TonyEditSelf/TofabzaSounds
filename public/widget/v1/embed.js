@@ -17,10 +17,13 @@
   "use strict";
 
   const WIDGET_ID = window.TofabzaWidgetId;
+
   const IS_DEV =
     window.__TOFABZA_BASE_URL__ === undefined ||
     window.__TOFABZA_BASE_URL__ === "http://localhost:3000";
-  const BASE_URL = window.__TOFABZA_BASE_URL__ ?? "http://localhost:3000";
+
+  const BASE_URL =
+    window.__TOFABZA_BASE_URL__ ?? "https://tofabza-sounds.vercel.app";
 
   if (!WIDGET_ID) {
     console.error("[Tofabza] TofabzaWidgetId is not set.");
