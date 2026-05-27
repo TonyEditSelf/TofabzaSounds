@@ -15,7 +15,8 @@
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { calculateCallCost } from "@/lib/costs/pricing"; // reuse existing cost logic
+// import { calculateCallCost } from "@/lib/costs/pricing";
+// reuse existing cost logic
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
