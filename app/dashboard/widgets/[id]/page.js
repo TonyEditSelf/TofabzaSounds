@@ -289,6 +289,7 @@ export default function WidgetDetailPage({ params }) {
         name: widget?.name,
         voice_id: cfg.voice_id ?? "anand",
         language: cfg.language ?? "ml-IN",
+        pace: cfg.pace ?? 1.0,
         system_prompt: cfg.system_prompt ?? "",
         greeting: cfg.greeting ?? "",
         style: cfg.style ?? "bubble",
@@ -352,6 +353,7 @@ export default function WidgetDetailPage({ params }) {
           bgColor: form.bgColor ?? "#ffffff",
           llm_provider: form.llm_provider,
           darkMode: form.darkMode,
+          pace: form.pace ?? 1.0,
         },
       })
       .eq("id", id);
@@ -583,6 +585,22 @@ export default function WidgetDetailPage({ params }) {
                 boxSizing: "border-box",
               }}
             />
+          </div>
+
+          {/* Voice Speed */}
+          <div style={s.field}>
+            <label style={s.label}>Voice Speed</label>
+            <select
+              value={form.pace}
+              onChange={(e) => set("pace", parseFloat(e.target.value))}
+              style={s.select}
+            >
+              <option value={0.75}>0.75× — Slow</option>
+              <option value={1.0}>1.0× — Normal</option>
+              <option value={1.25}>1.25× — Fast</option>
+              <option value={1.5}>1.5× — Faster</option>
+              <option value={2.0}>2.0× — Fastest</option>
+            </select>
           </div>
 
           {/* Greeting */}

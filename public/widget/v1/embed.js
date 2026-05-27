@@ -17,6 +17,9 @@
   "use strict";
 
   const WIDGET_ID = window.TofabzaWidgetId;
+  const IS_DEV =
+    window.__TOFABZA_BASE_URL__ === undefined ||
+    window.__TOFABZA_BASE_URL__ === "http://localhost:3000";
   const BASE_URL = window.__TOFABZA_BASE_URL__ ?? "http://localhost:3000";
 
   if (!WIDGET_ID) {
@@ -51,8 +54,15 @@
         throw new Error(data?.error?.message ?? "Token fetch failed");
       token = data.token;
     } catch (err) {
+      if (!IS_DEV) {
+        console.error(
+          "[Tofabza] Token fetch failed — aborting widget init:",
+          err.message,
+        );
+        throw err; // fatal in production
+      }
       console.warn(
-        "[Tofabza] Token fetch failed — proceeding without token:",
+        "[Tofabza] Token fetch failed — proceeding without token (dev only):",
         err.message,
       );
     }
@@ -372,27 +382,61 @@
         signal: AbortSignal.timeout(30_000),
       });
 
-      const data = await res.json();
-      hideTyping(shadow);
-
-      if (!res.ok || data.error) {
-        addMessage(
-          shadow,
-          "error",
-          data?.error?.message ?? "Something went wrong. Please try again.",
-        );
+      if (!res.ok) {
+        hideTyping(shadow);
+        addMessage(shadow, "error", "Something went wrong. Please try again.");
         return;
       }
 
-      addMessage(shadow, "assistant", data.reply);
-      history.push({ role: "assistant", content: data.reply });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuf = "";
+      let fullReply = "";
+      let detectedLanguage = detectedLang ?? widgetConfig?.language ?? "ml-IN";
+      let sentenceBuf = "";
+      let ttsQueue = Promise.resolve();
+      let msgDiv = null;
+      const pace = widgetConfig?.pace ?? widgetConfig?.speed ?? 1.0;
+      const voice = widgetConfig?.voice_id ?? "anand";
 
-      // Play TTS
-      playTTS(
-        data.reply,
-        data.language ?? detectedLang ?? widgetConfig?.language ?? "ml-IN",
-        widgetConfig?.voice_id ?? "anand",
-      );
+      function queueTTS(sentence, lang) {
+        ttsQueue = ttsQueue.then(() =>
+          playTTSAndWait(sentence.trim(), lang, voice, pace).catch(() => {}),
+        );
+      }
+
+      hideTyping(shadow);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuf += decoder.decode(value, { stream: true });
+        const lines = sseBuf.split("\n");
+        sseBuf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            if (parsed.done) {
+              detectedLanguage = parsed.language ?? detectedLanguage;
+              if (sentenceBuf.trim()) queueTTS(sentenceBuf, detectedLanguage);
+              sentenceBuf = "";
+            } else if (parsed.token) {
+              fullReply += parsed.token;
+              sentenceBuf += parsed.token;
+              if (!msgDiv) msgDiv = addMessage(shadow, "assistant", fullReply);
+              else msgDiv.textContent = fullReply;
+              const m = sentenceBuf.search(/[.!?।]\s/);
+              if (m !== -1) {
+                queueTTS(sentenceBuf.slice(0, m + 1), detectedLanguage);
+                sentenceBuf = sentenceBuf.slice(m + 2);
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (fullReply) history.push({ role: "assistant", content: fullReply });
     } catch (err) {
       console.error("[tofabza] chat error:", err);
       hideTyping(shadow);
@@ -420,7 +464,7 @@
 
   // VAD constants
   const VAD_SILENCE_THRESHOLD = 8; // RMS below this = silence
-  const VAD_SILENCE_DURATION = 1500; // ms silence before auto-send
+  const VAD_SILENCE_DURATION = 600; // ms silence before auto-send
   const MIN_SPEECH_SIZE = 8000; // bytes — skip if too short
 
   // ── Call controls ─────────────────────────────────────────────────────────────
@@ -484,7 +528,13 @@
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch {
       endCall(shadow);
       return;
@@ -577,27 +627,24 @@
 
         const sttRes = await fetch(`${BASE_URL}/api/stt`, {
           method: "POST",
-          headers: { "X-Audio-Mime": mimeType || "audio/webm" },
+          headers: {
+            "X-Audio-Mime": mimeType || "audio/webm",
+            "x-widget-token": token ?? "",
+          },
           body: formData,
           signal: AbortSignal.timeout(15_000),
         });
         const sttData = await sttRes.json();
 
-        if (!sttRes.ok || !sttData.transcript) {
-          addMessage(shadow, "error", "Didn't catch that.");
+        if (!sttRes.ok || !sttData.transcript?.trim()) {
           isProcessing = false;
           shadow.getElementById("mic-btn").textContent = "🎤";
-          setTimeout(() => listenOnce(shadow), 500);
+          setTimeout(() => listenOnce(shadow), 300);
           return;
         }
 
-        // Show transcript
-        addMessage(shadow, "user", sttData.transcript);
         history.push({ role: "user", content: sttData.transcript });
-
-        // Chat
-        showTyping(shadow);
-        const chatRes = await fetch(`${BASE_URL}/api/chat`, {
+        const chatPromise = fetch(`${BASE_URL}/api/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -610,10 +657,12 @@
           }),
           signal: AbortSignal.timeout(30_000),
         });
-        const chatData = await chatRes.json();
+        addMessage(shadow, "user", sttData.transcript);
+        showTyping(shadow);
+        const chatData = await chatPromise.then((r) => r.json());
         hideTyping(shadow);
 
-        if (!chatRes.ok || !chatData.reply) {
+        if (!chatData.reply) {
           addMessage(
             shadow,
             "error",
@@ -635,6 +684,7 @@
             widgetConfig?.language ??
             "ml-IN",
           widgetConfig?.voice_id ?? "anand",
+          widgetConfig?.speed ?? 1.0,
         );
         // Show text after TTS finishes
         addMessage(shadow, "assistant", chatData.reply);
@@ -650,7 +700,7 @@
           "isProcessing:",
           isProcessing,
         );
-        if (callActive) setTimeout(() => listenOnce(shadow), 300);
+        if (callActive) setTimeout(() => listenOnce(shadow), 800);
       }
     };
     // dfdsfd fdsfdfsdfds
@@ -661,7 +711,7 @@
 
   // ── TTS with await ────────────────────────────────────────────────────────────
 
-  async function playTTSAndWait(text, language, speaker) {
+  async function playTTSAndWait(text, language, speaker, pace = 1.0) {
     return new Promise(async (resolve) => {
       let monitorStream = null;
       let monitorCtx = null;
@@ -718,8 +768,11 @@
       try {
         const res = await fetch(`${BASE_URL}/api/tts`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, language, speaker, pace: 1.0 }),
+          headers: {
+            "Content-Type": "application/json",
+            "x-widget-token": token ?? "",
+          },
+          body: JSON.stringify({ text, language, speaker, pace }),
         });
         if (!res.ok) {
           resolve();
@@ -749,7 +802,7 @@
         };
 
         source.start();
-        startBargeInMonitor(source); // non-blocking — runs in parallel
+        setTimeout(() => startBargeInMonitor(source), 1500); // give echo cancellation time to kick in
       } catch {
         stopMonitor();
         resolve();
@@ -771,6 +824,7 @@
         widgetConfig.greeting,
         widgetConfig.language ?? "ml-IN",
         widgetConfig.voice_id ?? "anand",
+        widgetConfig?.speed ?? 1.0,
       );
     }
 
@@ -958,9 +1012,17 @@
   }
 
   // Start after DOM ready
+  async function safeInit() {
+    try {
+      await init();
+    } catch (err) {
+      console.error("[Tofabza] Widget failed to initialise:", err.message);
+    }
+  }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", safeInit);
   } else {
-    init();
+    safeInit();
   }
 })();

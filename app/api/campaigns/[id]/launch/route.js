@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireOperator } from "@/lib/auth/requireOperator";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isPlivo } from "@/lib/telephony/provider";
+import { makePlivoCall } from "@/lib/plivo/client";
 
 // Exotel outbound call — v3 Calls API
 // POST https://api.exotel.com/v1/Accounts/{sid}/Calls/connect.json
@@ -39,8 +41,15 @@ async function makeExotelCall({ to, agentWebhookUrl }) {
 }
 
 export async function POST(req, { params }) {
-  const authError = await requireOperator(req);
-  if (authError) return authError;
+  // Allow cron/internal calls via x-internal-secret header
+  const internalSecret = req.headers.get("x-internal-secret");
+  const isInternalCall =
+    internalSecret && internalSecret === process.env.INTERNAL_API_SECRET;
+
+  if (!isInternalCall) {
+    const authError = await requireOperator(req);
+    if (authError) return authError;
+  }
 
   const { id } = params;
   const supabase = createAdminClient();
@@ -72,7 +81,7 @@ export async function POST(req, { params }) {
 
   // ── 2. load pending contacts ─────────────────────────────────────────────────
   const { data: contacts, error: contErr } = await supabase
-    .from("campaign_contacts")
+    .from("contacts")
     .select("id, phone, name")
     .eq("campaign_id", id)
     .eq("status", "pending");
@@ -92,12 +101,29 @@ export async function POST(req, { params }) {
   }
 
   // ── 3. mark campaign as running ──────────────────────────────────────────────
-  await supabase.from("campaigns").update({ status: "running" }).eq("id", id);
+  const { error: runErr } = await supabase
+    .from("campaigns")
+    .update({ status: "running" })
+    .eq("id", id);
+  if (runErr) {
+    return NextResponse.json(
+      { error: "Failed to update campaign status" },
+      { status: 500 },
+    );
+  }
 
   // ── 4. fire outbound calls (non-blocking — respond immediately) ──────────────
-  const nextjsUrl = process.env.NEXTJS_URL ?? "http://localhost:3000";
+  const nextjsUrl = process.env.NEXTJS_URL;
+  if (!nextjsUrl) {
+    return NextResponse.json(
+      { error: "NEXTJS_URL is not configured" },
+      { status: 500 },
+    );
+  }
 
-  const agentWebhookUrl = `${nextjsUrl}/api/webhooks/exotel/${campaign.agent_id}`;
+  const agentWebhookUrl = isPlivo()
+    ? `${nextjsUrl}/api/webhooks/plivo/${campaign.agent_id}`
+    : `${nextjsUrl}/api/webhooks/exotel/${campaign.agent_id}`;
 
   // Launch in background; don't await
   (async () => {
@@ -108,18 +134,22 @@ export async function POST(req, { params }) {
       try {
         // mark as calling
         await supabase
-          .from("campaign_contacts")
+          .from("contacts")
           .update({ status: "calling", called_at: new Date().toISOString() })
           .eq("id", contact.id);
 
-        const exotelRes = await makeExotelCall({
-          to: contact.phone,
-          agentWebhookUrl,
-        });
+        const exotelRes = isPlivo()
+          ? await makePlivoCall({
+              to: contact.phone,
+              answerUrl: agentWebhookUrl,
+            })
+          : await makeExotelCall({ to: contact.phone, agentWebhookUrl });
 
-        const callSid = exotelRes?.Call?.Sid ?? null;
+        const callSid = isPlivo()
+          ? (exotelRes?.request_uuid ?? null)
+          : (exotelRes?.Call?.Sid ?? null);
 
-        await supabase.from("call_logs").insert({
+        const { error: logErr } = await supabase.from("call_logs").insert({
           call_sid: callSid,
           agent_id: campaign.agent_id,
           client_id: campaign.client_id,
@@ -129,12 +159,22 @@ export async function POST(req, { params }) {
           campaign_id: id,
           started_at: new Date().toISOString(),
         });
+        if (logErr)
+          console.error(
+            `[campaign:launch] call_log insert failed for ${contact.phone}:`,
+            logErr.message,
+          );
 
-        // Optimistically mark answered — real status comes via Exotel status callback
-        await supabase
-          .from("campaign_contacts")
-          .update({ status: "answered" })
+        // Store call_sid so the status webhook can match exactly
+        const { error: callingErr } = await supabase
+          .from("contacts")
+          .update({ status: "calling", call_sid: callSid })
           .eq("id", contact.id);
+        if (callingErr)
+          console.error(
+            `[campaign:launch] contact status update failed:`,
+            callingErr.message,
+          );
 
         answeredCount++;
 
@@ -147,7 +187,7 @@ export async function POST(req, { params }) {
         );
 
         await supabase
-          .from("campaign_contacts")
+          .from("contacts")
           .update({ status: "failed" })
           .eq("id", contact.id);
 
@@ -156,7 +196,7 @@ export async function POST(req, { params }) {
     }
 
     // ── mark campaign completed ─────────────────────────────────────────────
-    await supabase
+    const { error: completeErr } = await supabase
       .from("campaigns")
       .update({
         status: "completed",
@@ -168,6 +208,11 @@ export async function POST(req, { params }) {
         },
       })
       .eq("id", id);
+    if (completeErr)
+      console.error(
+        "[campaign:launch] Failed to mark campaign completed:",
+        completeErr.message,
+      );
 
     console.log(
       `[campaign:launch] Done — answered: ${answeredCount}, failed: ${failedCount}`,

@@ -10,7 +10,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 export async function GET(req, { params }) {
   const { widget_id } = await params;
 
-  const supabase = await createAdminClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("widgets")
     .select("name, status, config")
@@ -33,5 +33,6 @@ export async function GET(req, { params }) {
     accentColor: data.config?.accentColor ?? "#F97316",
     language: data.config?.language ?? "ml-IN",
     voice_id: data.config?.voice_id ?? "anand",
+    pace: data.config?.pace ?? 1.0,
   });
 }

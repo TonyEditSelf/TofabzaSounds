@@ -30,7 +30,7 @@ const supabase = createClient(
   { realtime: { transport: ws } },
 );
 
-export function handleCall(ws, req) {
+export function handleCall(ws, req, provider = "exotel") {
   const url = new URL(req.url, "wss://localhost");
   const agentId = url.searchParams.get("agent_id");
   const lang = url.searchParams.get("lang") ?? "ml-IN";
@@ -236,7 +236,10 @@ export function handleCall(ws, req) {
 
       case "start":
         streamSid = msg.stream_sid ?? msg.start?.stream_sid;
-        callSid = msg.start?.call_sid;
+        callSid =
+          provider === "plivo"
+            ? (msg.start?.callId ?? msg.start?.call_sid)
+            : msg.start?.call_sid;
         callStart = Date.now();
         console.log(`[call] start callSid=${callSid}`);
 

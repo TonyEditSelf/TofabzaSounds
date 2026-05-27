@@ -17,7 +17,7 @@ import { useUIStore } from "@/store/ui";
 
 const supabase = createClient();
 
-const STATUSES = ["draft", "active", "paused", "completed"];
+const STATUSES = ["draft", "running", "paused", "completed", "failed"];
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 
@@ -62,7 +62,10 @@ function AddCampaignForm({ clients, activeClientId, onSuccess, onCancel }) {
       name: form.name.trim(),
       client_id: form.client_id,
       status: form.status,
+      agent_id: null,
+      type: "transactional",
     });
+    if (error) console.error("Campaign insert error:", error);
     setSaving(false);
     if (error) {
       toast.error("Failed to add campaign.");

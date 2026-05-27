@@ -34,25 +34,34 @@ const server = http.createServer((req, res) => {
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 
-const wss = new WebSocketServer({ server, path: "/ws/call" });
+const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
   // Basic auth validation (optional — if using Basic Auth in WSS URL)
   const authHeader = req.headers["authorization"];
-  if (
-    process.env.EXOTEL_API_KEY &&
-    process.env.EXOTEL_API_TOKEN &&
-    authHeader
-  ) {
+  const exotelConfigured =
+    process.env.EXOTEL_API_KEY && process.env.EXOTEL_API_TOKEN;
+
+  if (exotelConfigured) {
+    if (!authHeader) {
+      console.warn("[ws] Rejected — missing Authorization header");
+      ws.close(1008, "Unauthorised");
+      return;
+    }
     const expected = `Basic ${Buffer.from(`${process.env.EXOTEL_API_KEY}:${process.env.EXOTEL_API_TOKEN}`).toString("base64")}`;
     if (authHeader !== expected) {
-      console.warn("[ws] Unauthorised connection attempt");
+      console.warn("[ws] Rejected — invalid Authorization header");
       ws.close(1008, "Unauthorised");
       return;
     }
   }
 
-  handleCall(ws, req);
+  const url = req.url ?? "/";
+  if (url.startsWith("/plivo")) {
+    handleCall(ws, req, "plivo");
+  } else {
+    handleCall(ws, req, "exotel");
+  }
 });
 
 wss.on("error", (err) => {
@@ -63,7 +72,8 @@ wss.on("error", (err) => {
 
 server.listen(PORT, () => {
   console.log(`[server] Tofabza telephony server running on port ${PORT}`);
-  console.log(`[server] WebSocket endpoint: ws://localhost:${PORT}/ws/call`);
+  console.log(`[server] Exotel WS: ws://localhost:${PORT}/ws/call`);
+  console.log(`[server] Plivo  WS: ws://localhost:${PORT}/plivo`);
 });
 
 // Graceful shutdown

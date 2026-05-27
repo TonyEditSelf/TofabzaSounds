@@ -39,7 +39,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
               "font-src 'self' fonts.gstatic.com",
               "img-src 'self' data: blob: *.supabase.co",
-              "connect-src 'self' *.supabase.co api.sarvam.ai api.openai.com",
+              "connect-src 'self' *.supabase.co api.sarvam.ai api.openai.com *.sentry.io",
               "media-src 'self' blob: *.supabase.co",
               "frame-ancestors 'none'",
             ].join("; "),
@@ -63,7 +63,6 @@ const nextConfig = {
         ],
       },
       {
-        // Widget API routes — allow cross-origin from client sites
         source: "/api/widget/:path*",
         headers: [
           { key: "Access-Control-Allow-Origin", value: "*" },
@@ -145,4 +144,6 @@ export default withSentryConfig(nextConfig, {
   silent: !process.env.CI,
   widenClientFileUpload: true,
   automaticVercelMonitors: true,
+  autoInstrumentServerFunctions: false,
+  headers: false,
 });

@@ -31,10 +31,21 @@ const STATUS_MAP = {
 
 export async function POST(req) {
   try {
+    // Verify shared secret from URL query param
+    // StatusCallback URL must be set as:
+    // /api/webhooks/exotel/status?secret=YOUR_INTERNAL_API_SECRET
+    // Verify via header instead of URL query param (secrets don't belong in URLs)
+    const secret = req.headers.get("x-internal-secret");
+    if (!secret || secret !== process.env.INTERNAL_API_SECRET) {
+      console.warn("[exotel/status] invalid or missing secret — rejecting");
+      return NextResponse.json({ ok: false }, { status: 401 });
+    }
+
+    // Replay protection — reject if same CallSid already finalized
+
     // Parse form-encoded body
     const text = await req.text();
     const params = Object.fromEntries(new URLSearchParams(text));
-
     const callSid = params.CallSid || params.call_sid;
     const rawStatus = (params.Status || params.status || "").toLowerCase();
     const duration = parseInt(params.Duration || params.duration || "0", 10);
@@ -57,7 +68,7 @@ export async function POST(req) {
     // Fetch existing log to get cost context
     const { data: log, error: fetchErr } = await supabase
       .from("call_logs")
-      .select("id, total_cost_inr, direction, started_at")
+      .select("id, status, total_cost_inr, direction, started_at")
       .eq("call_sid", callSid)
       .maybeSingle();
 
@@ -70,10 +81,20 @@ export async function POST(req) {
     }
 
     if (!log) {
-      // Unknown CallSid — could be an inbound call not initiated by us, or a duplicate.
-      // Return 200 so Exotel doesn't keep retrying.
       console.warn("[exotel/status] CallSid not found in call_logs:", callSid);
       return NextResponse.json({ ok: true, note: "unknown CallSid — ignored" });
+    }
+
+    // Replay protection — if already finalized, ignore duplicate callbacks
+    if (log.status === "completed" || log.status === "failed") {
+      console.warn(
+        "[exotel/status] duplicate callback for already-finalized CallSid:",
+        callSid,
+      );
+      return NextResponse.json({
+        ok: true,
+        note: "already finalized — ignored",
+      });
     }
 
     // Calculate Exotel cost for this call duration
@@ -81,9 +102,10 @@ export async function POST(req) {
     const exotelCost =
       isFinal && duration > 0
         ? parseFloat(
-            ((duration / 60) * (EXOTEL_COSTS?.OUTBOUND_PER_MIN ?? 0.5)).toFixed(
-              4,
-            ),
+            (
+              (duration / 60) *
+              (EXOTEL_COSTS?.PER_MINUTE_OUTBOUND ?? 0.5)
+            ).toFixed(4),
           )
         : 0;
 
@@ -122,15 +144,20 @@ export async function POST(req) {
         .eq("call_sid", callSid)
         .maybeSingle();
 
-      if (fullLog?.campaign_id && fullLog?.caller_number) {
-        await supabase
-          .from("campaign_contacts")
+      if (callSid) {
+        const { error: contactErr } = await supabase
+          .from("contacts")
           .update({
             status: mappedStatus === "completed" ? "called" : "failed",
           })
-          .eq("campaign_id", fullLog.campaign_id)
-          .eq("phone", fullLog.caller_number)
-          .eq("status", "calling"); // only update if still marked "calling"
+          .eq("call_sid", callSid)
+          .eq("status", "calling");
+        if (contactErr) {
+          console.error(
+            "[exotel/status] Failed to update campaign_contact:",
+            contactErr.message,
+          );
+        }
       }
     }
 

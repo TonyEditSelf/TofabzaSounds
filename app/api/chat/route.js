@@ -32,7 +32,9 @@ function sanitiseSystemPrompt(prompt = "") {
   return clean;
 }
 
-function geminiUrl(model) {
+function geminiUrl(model, stream = false) {
+  if (stream)
+    return `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 }
 
@@ -83,14 +85,27 @@ async function logCost(
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req) {
-  const {
-    widget_id,
+  let widget_id,
     session_id,
     message,
     token,
     history = [],
-    language,
-  } = await req.json();
+    language;
+  try {
+    ({
+      widget_id,
+      session_id,
+      message,
+      token,
+      history = [],
+      language,
+    } = await req.json());
+  } catch {
+    return Response.json(
+      { error: { code: "INVALID_JSON", message: "Invalid request body." } },
+      { status: 400 },
+    );
+  }
 
   if (!widget_id || !message?.trim()) {
     return Response.json(
@@ -132,8 +147,25 @@ export async function POST(req) {
     );
   }
 
+  // 2a. Start RAG immediately — runs in parallel with token validation
+  const ragPromise =
+    process.env.DISABLE_RAG === "true"
+      ? Promise.resolve("")
+      : ragQuery({ query: message, owner_id: widget_id, owner_type: "widget" });
+
   // 2. Token validation (production only)
-  if (process.env.NODE_ENV === "production" && token) {
+  if (process.env.NODE_ENV === "production") {
+    if (!token) {
+      return Response.json(
+        {
+          error: {
+            code: "MISSING_TOKEN",
+            message: "Authentication token is required.",
+          },
+        },
+        { status: 401 },
+      );
+    }
     const { valid, reason } = await validateToken(supabase, token, widget_id);
     if (!valid) {
       return Response.json(
@@ -143,15 +175,8 @@ export async function POST(req) {
     }
   }
 
-  // 3. RAG context (skip if no KB attached to save API calls)
-  const ragContext =
-    process.env.DISABLE_RAG === "true"
-      ? ""
-      : await ragQuery({
-          query: message,
-          owner_id: widget_id,
-          owner_type: "widget",
-        });
+  // 3. Await RAG (was running during token validation above)
+  const ragContext = await ragPromise;
 
   // 4. System prompt
   const detectedLang = language ?? widget.config?.language ?? "ml-IN";
@@ -214,7 +239,7 @@ export async function POST(req) {
         signal: AbortSignal.timeout(60_000),
       });
     } else {
-      geminiRes = await fetch(geminiUrl(modelName), {
+      geminiRes = await fetch(geminiUrl(modelName, true), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -257,26 +282,82 @@ export async function POST(req) {
     );
   }
 
-  const geminiData = await geminiRes.json();
-  const reply = USE_LOCAL_LLM
-    ? (geminiData?.choices?.[0]?.message?.content ?? "")
-    : (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "");
-
-  if (!reply) {
-    return Response.json(
-      { error: { code: "EMPTY_RESPONSE", message: "No response generated." } },
-      { status: 502 },
-    );
+  // 8. Local LLM — non-streaming fallback
+  if (USE_LOCAL_LLM) {
+    const geminiData = await geminiRes.json();
+    const reply = geminiData?.choices?.[0]?.message?.content ?? "";
+    if (!reply)
+      return Response.json(
+        {
+          error: { code: "EMPTY_RESPONSE", message: "No response generated." },
+        },
+        { status: 502 },
+      );
+    logCost(supabase, {
+      widget_id,
+      client_id: widget.client_id,
+      session_id: session_id ?? crypto.randomUUID(),
+      input_tokens: 0,
+      output_tokens: 0,
+    }).catch(() => {});
+    return Response.json({ reply, language: detectedLang });
   }
 
-  // 8. Log session (non-fatal)
-  await logCost(supabase, {
-    widget_id,
-    client_id: widget.client_id,
-    session_id: session_id ?? crypto.randomUUID(),
-    input_tokens: geminiData?.usageMetadata?.promptTokenCount ?? 0,
-    output_tokens: geminiData?.usageMetadata?.candidatesTokenCount ?? 0,
+  // 8. Stream Gemini SSE → client SSE
+  const _sid = session_id ?? crypto.randomUUID();
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const reader = geminiRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const raw = line.slice(6).trim();
+            if (!raw || raw === "[DONE]") continue;
+            try {
+              const chunk = JSON.parse(raw);
+              const token =
+                chunk?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+              if (token)
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ token, language: detectedLang })}\n\n`,
+                  ),
+                );
+            } catch {}
+          }
+        }
+      } finally {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ done: true, language: detectedLang })}\n\n`,
+          ),
+        );
+        controller.close();
+        logCost(supabase, {
+          widget_id,
+          client_id: widget.client_id,
+          session_id: _sid,
+          input_tokens: 0,
+          output_tokens: 0,
+        }).catch(() => {});
+      }
+    },
   });
 
-  return Response.json({ reply, language: detectedLang });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

@@ -26,7 +26,10 @@ function extractDomain(origin = "") {
 }
 
 export async function POST(req) {
-  const { widget_id, origin } = await req.json();
+  const { widget_id } = await req.json();
+
+  // Use the real Origin header — not the client-supplied body field
+  const origin = req.headers.get("origin") ?? req.headers.get("referer") ?? "";
 
   if (!widget_id || !origin) {
     return Response.json(

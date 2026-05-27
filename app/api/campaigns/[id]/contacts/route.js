@@ -12,7 +12,7 @@ export async function GET(req, { params }) {
   const supabase = createAdminClient();
 
   const { data, error } = await supabase
-    .from("campaign_contacts")
+    .from("contacts")
     .select("id, phone, name, status, called_at, created_at")
     .eq("campaign_id", id)
     .order("created_at", { ascending: true });
@@ -48,7 +48,7 @@ export async function DELETE(req, { params }) {
   }
 
   const { error } = await supabase
-    .from("campaign_contacts")
+    .from("contacts")
     .delete()
     .eq("campaign_id", id);
 

@@ -19,6 +19,8 @@ const NAV = [
   { href: "/dashboard/widgets", label: "Widgets", icon: "⬢" },
   null,
   { href: "/dashboard/campaigns", label: "Campaigns", icon: "▷" },
+  { href: "/dashboard/onboarding", label: "Onboarding", icon: "📋" },
+  { href: "/dashboard/form-builder", label: "Form Builder", icon: "🧩" },
   { href: "/dashboard/analytics", label: "Analytics", icon: "◈" },
   { href: "/dashboard/costs", label: "Costs", icon: "₹" },
   null,
@@ -137,7 +139,9 @@ export default function Sidebar() {
                   style={{
                     ...s.themeToggleThumb,
                     transform:
-                      themeMode === "dark" ? "translateX(16px)" : "translateX(0)",
+                      themeMode === "dark"
+                        ? "translateX(16px)"
+                        : "translateX(0)",
                   }}
                 />
               </span>

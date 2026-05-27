@@ -72,6 +72,53 @@ async function fetchCosts(id) {
   return data ?? [];
 }
 
+async function fetchChecklist(clientId) {
+  const { data: agents } = await supabase
+    .from("agents")
+    .select("id, name, status, config")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: true });
+
+  if (!agents?.length) return [];
+
+  const agentIds = agents.map((a) => a.id);
+
+  const { data: submissions } = await supabase
+    .from("onboarding_submissions")
+    .select("agent_id, status")
+    .in("agent_id", agentIds)
+    .eq("status", "pushed");
+
+  const { data: kbs } = await supabase
+    .from("knowledge_bases")
+    .select("owner_id, kb_chunks(count)")
+    .in("owner_id", agentIds)
+    .eq("owner_type", "agent");
+
+  const submittedSet = new Set((submissions ?? []).map((s) => s.agent_id));
+  const kbMap = {};
+  for (const kb of kbs ?? []) {
+    kbMap[kb.owner_id] =
+      (kbMap[kb.owner_id] ?? 0) + (kb.kb_chunks?.[0]?.count ?? 0);
+  }
+
+  return agents.map((a) => ({
+    id: a.id,
+    name: a.name,
+    status: a.status,
+    steps: {
+      intake_submitted: submittedSet.has(a.id),
+      agent_created: true,
+      kb_uploaded: (kbMap[a.id] ?? 0) > 0,
+      telephony_configured: !!(
+        a.config?.exotel_number || a.config?.plivo_number
+      ),
+      test_call_passed: !!a.config?.test_call_passed,
+      live: a.status === "active",
+    },
+  }));
+}
+
 // ─── Edit form ────────────────────────────────────────────────────────────────
 
 function EditForm({ client, onDone }) {
@@ -1011,14 +1058,320 @@ function InvoiceTab({ clientId, clientName, contactName, contactEmail }) {
   );
 }
 
+function DeleteDataModal({ clientName, clientId, onClose }) {
+  const [confirm, setConfirm] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function handleDelete() {
+    if (confirm !== "DELETE") return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/delete-data`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      setDone(true);
+    } catch {
+      toast.error("Delete failed. Check console.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div style={modal.overlay} onClick={onClose}>
+      <div style={modal.box} onClick={(e) => e.stopPropagation()}>
+        {done ? (
+          <>
+            <p style={{ fontSize: "2rem", margin: "0 0 8px" }}>✓</p>
+            <p
+              style={{
+                color: "var(--ink-900)",
+                fontWeight: 600,
+                margin: "0 0 6px",
+              }}
+            >
+              Data deleted
+            </p>
+            <p
+              style={{
+                color: "var(--ink-500)",
+                fontSize: "0.84rem",
+                margin: "0 0 20px",
+              }}
+            >
+              All call logs, transcripts, widget sessions and tokens for{" "}
+              <strong>{clientName}</strong> have been wiped.
+            </p>
+            <button onClick={onClose} style={s.btnGhost}>
+              Close
+            </button>
+          </>
+        ) : (
+          <>
+            <p
+              style={{
+                color: "var(--crimson-500, #e11d48)",
+                fontWeight: 600,
+                fontSize: "1rem",
+                margin: "0 0 6px",
+              }}
+            >
+              Delete patient data
+            </p>
+            <p
+              style={{
+                color: "var(--ink-500)",
+                fontSize: "0.84rem",
+                margin: "0 0 16px",
+              }}
+            >
+              This permanently wipes all call logs, transcripts, widget sessions
+              and tokens for <strong>{clientName}</strong>. Cannot be undone.
+            </p>
+            <label style={s.label}>Type DELETE to confirm</label>
+            <input
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="DELETE"
+              style={{
+                ...s.input,
+                marginBottom: "16px",
+                borderColor:
+                  confirm === "DELETE"
+                    ? "var(--crimson-500, #e11d48)"
+                    : undefined,
+              }}
+            />
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={handleDelete}
+                disabled={confirm !== "DELETE" || deleting}
+                style={{
+                  ...s.btnPrimary,
+                  background: "var(--crimson-500, #e11d48)",
+                  opacity: confirm !== "DELETE" ? 0.5 : 1,
+                  cursor: confirm !== "DELETE" ? "not-allowed" : "pointer",
+                }}
+              >
+                {deleting ? "Deleting…" : "Delete data"}
+              </button>
+              <button onClick={onClose} style={s.btnGhost}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const modal = {
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+  },
+  box: {
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "12px",
+    padding: "1.5rem",
+    width: "100%",
+    maxWidth: "400px",
+    boxShadow: "0 8px 40px rgba(0,0,0,0.15)",
+  },
+};
+
+const CHECKLIST_STEPS = [
+  { key: "intake_submitted", label: "Intake submitted" },
+  { key: "agent_created", label: "Agent created" },
+  { key: "kb_uploaded", label: "KB uploaded" },
+  { key: "telephony_configured", label: "Telephony configured" },
+  { key: "test_call_passed", label: "Test call passed" },
+  { key: "live", label: "Live" },
+];
+
+function ChecklistTab({ clientId }) {
+  const { data: agents, mutate } = useSWR(`checklist:${clientId}`, () =>
+    fetchChecklist(clientId),
+  );
+  const [toggling, setToggling] = useState(null);
+
+  async function toggleTestCall(agentId, current) {
+    setToggling(agentId);
+    const { data: agentRow } = await supabase
+      .from("agents")
+      .select("config")
+      .eq("id", agentId)
+      .single();
+    await supabase
+      .from("agents")
+      .update({ config: { ...agentRow?.config, test_call_passed: !current } })
+      .eq("id", agentId);
+    setToggling(null);
+    mutate();
+  }
+
+  if (!agents) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {[1, 2].map((i) => (
+          <div
+            key={i}
+            style={{ ...s.skeleton, height: 80, borderRadius: 10 }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (agents.length === 0) {
+    return (
+      <p style={s.empty}>
+        No agents yet. Create an agent to see the checklist.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {agents.map((agent) => {
+        const allGreen = Object.values(agent.steps).every(Boolean);
+        return (
+          <div
+            key={agent.id}
+            style={{
+              background: "var(--surface)",
+              border: `1px solid ${allGreen ? "rgba(22,163,74,0.3)" : "var(--border)"}`,
+              borderRadius: 10,
+              padding: "1.25rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "1rem",
+              }}
+            >
+              <span
+                style={{
+                  fontWeight: 500,
+                  fontSize: "0.9rem",
+                  color: "var(--ink-900)",
+                }}
+              >
+                {agent.name}
+              </span>
+              {allGreen ? (
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontFamily: "var(--font-mono)",
+                    color: "#16A34A",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  ● ALL GREEN
+                </span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--ink-400)",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {Object.values(agent.steps).filter(Boolean).length}/
+                  {CHECKLIST_STEPS.length} DONE
+                </span>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {CHECKLIST_STEPS.map((step) => {
+                const done = agent.steps[step.key];
+                const isToggleable = step.key === "test_call_passed";
+                return (
+                  <div
+                    key={step.key}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "8px 10px",
+                      borderRadius: 7,
+                      background: done
+                        ? "rgba(22,163,74,0.06)"
+                        : "var(--surface-2)",
+                    }}
+                  >
+                    <span style={{ fontSize: "1rem", lineHeight: 1 }}>
+                      {done ? "✅" : "⬜"}
+                    </span>
+                    <span
+                      style={{
+                        flex: 1,
+                        fontSize: "0.84rem",
+                        color: done ? "var(--ink-700)" : "var(--ink-400)",
+                        fontWeight: done ? 500 : 400,
+                      }}
+                    >
+                      {step.label}
+                    </span>
+                    {isToggleable && (
+                      <button
+                        onClick={() => toggleTestCall(agent.id, done)}
+                        disabled={toggling === agent.id}
+                        style={{
+                          ...s.btnGhost,
+                          minHeight: 28,
+                          padding: "4px 10px",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        {toggling === agent.id
+                          ? "…"
+                          : done
+                            ? "Unmark"
+                            : "Mark passed"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const TABS = ["Agents", "Widgets", "Campaigns", "Costs", "Invoice"];
+const TABS = [
+  "Agents",
+  "Widgets",
+  "Campaigns",
+  "Costs",
+  "Invoice",
+  "Checklist",
+];
 
 export default function ClientDetailPage({ params }) {
   const { id } = use(params);
   const [activeTab, setActiveTab] = useState("Agents");
   const [editing, setEditing] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const {
     data: client,
@@ -1056,19 +1409,28 @@ export default function ClientDetailPage({ params }) {
               .join(" · ") || "No contact info"}
           </p>
         </div>
-        <button onClick={() => setEditing((e) => !e)} style={s.btnGhost}>
-          {editing ? "Cancel" : "Edit"}
-        </button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => setEditing((e) => !e)} style={s.btnGhost}>
+            {editing ? "Cancel" : "Edit"}
+          </button>
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            style={{
+              ...s.btnGhost,
+              color: "var(--crimson-500, #e11d48)",
+              borderColor: "var(--crimson-500, #e11d48)",
+            }}
+          >
+            Delete data
+          </button>
+        </div>
       </div>
 
-      {/* Edit form */}
-      {editing && (
-        <EditForm
-          client={client}
-          onDone={() => {
-            setEditing(false);
-            mutate();
-          }}
+      {showDeleteModal && (
+        <DeleteDataModal
+          clientName={client.name}
+          clientId={id}
+          onClose={() => setShowDeleteModal(false)}
         />
       )}
 
@@ -1110,6 +1472,7 @@ export default function ClientDetailPage({ params }) {
             contactEmail={client.contact_email}
           />
         )}
+        {activeTab === "Checklist" && <ChecklistTab clientId={id} />}
       </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>

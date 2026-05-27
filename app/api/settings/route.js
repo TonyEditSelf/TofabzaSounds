@@ -89,7 +89,7 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const upserts = [];
 
   for (const [key, value] of Object.entries(body)) {

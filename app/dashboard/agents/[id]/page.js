@@ -1,27 +1,23 @@
 "use client";
 
-/**
- * app/dashboard/agents/[id]/page.js
- *
- * Sections:
- *  1. Header — name + type badge + status badge + save
- *  2. Config — language, voice, LLM, Exotel number, system prompt (8000 chars)
- *  3. Knowledge Base
- *  4. Webhook URL — copy for Exotel
- *  5. Danger zone — delete
- */
-
 import { useState, use, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { BULBUL_V3_SPEAKERS } from "@/lib/sarvam/voices";
-import { TTS_SUPPORTED_LANGUAGES } from "@/lib/sarvam/voices";
+import {
+  BULBUL_V3_SPEAKERS,
+  TTS_SUPPORTED_LANGUAGES,
+} from "@/lib/sarvam/voices";
 
 const supabase = createClient();
 
-// ─── Fetchers ─────────────────────────────────────────────────────────────────
+const FACILITY_TYPES = [
+  { slug: "polyclinic", label: "Polyclinic", icon: "🏥" },
+  { slug: "diagnostic", label: "Diagnostic Centre", icon: "🔬" },
+  { slug: "dental", label: "Dental Clinic", icon: "🦷" },
+  { slug: "hospital", label: "Hospital", icon: "🏨" },
+];
 
 async function fetchAgent(id) {
   const { data, error } = await supabase
@@ -32,7 +28,6 @@ async function fetchAgent(id) {
   if (error) throw error;
   return data;
 }
-
 async function fetchClients() {
   const { data } = await supabase
     .from("clients")
@@ -40,7 +35,6 @@ async function fetchClients() {
     .order("name");
   return data ?? [];
 }
-
 async function fetchKBs(id) {
   const { data, error } = await supabase
     .from("knowledge_bases")
@@ -52,7 +46,136 @@ async function fetchKBs(id) {
   return data ?? [];
 }
 
-// ─── Knowledge Base Section ───────────────────────────────────────────────────
+function OnboardingDataSection({ agentId }) {
+  const [submission, setSubmission] = useState(null);
+  const sb = createClient();
+
+  useEffect(() => {
+    sb.from("onboarding_submissions")
+      .select("form_data, files, status, pushed_at")
+      .eq("agent_id", agentId)
+      .in("status", ["pushed", "rejected"])
+      .order("pushed_at", { ascending: false })
+      .limit(1)
+      .single()
+      .then(({ data, error }) => {
+        console.log("onboarding:", data, error);
+        setSubmission(data);
+      });
+  }, [agentId]);
+
+  if (!submission) return null;
+
+  const formData = submission.form_data || {};
+  const files = submission.files || [];
+  const hasData = Object.values(formData).some((v) => v);
+
+  return (
+    <div style={s.section}>
+      <h2 style={s.sectionTitle}>Onboarding Data</h2>
+      <p style={s.hint}>
+        Submitted by clinic · pushed{" "}
+        {new Date(submission.pushed_at).toLocaleDateString("en-IN", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })}
+      </p>
+
+      {hasData && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "180px 1fr",
+            gap: "0.5rem 1rem",
+            marginBottom: "1rem",
+          }}
+        >
+          {Object.entries(formData).map(([key, val]) => {
+            if (!val) return null;
+            return [
+              <div
+                key={`k-${key}`}
+                style={{
+                  fontSize: 12,
+                  color: "var(--ink-500)",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-mono)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  paddingTop: 2,
+                }}
+              >
+                {key.replace(/_/g, " ")}
+              </div>,
+              <div
+                key={`v-${key}`}
+                style={{
+                  fontSize: 13,
+                  color: "var(--ink-800)",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {String(val)}
+              </div>,
+            ];
+          })}
+        </div>
+      )}
+
+      {files.length > 0 && (
+        <>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--ink-500)",
+              fontFamily: "var(--font-mono)",
+              marginBottom: 8,
+            }}
+          >
+            Uploaded Files ({files.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {files.map((f, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "8px 12px",
+                }}
+              >
+                <span>📄</span>
+                <span
+                  style={{ flex: 1, fontSize: 13, color: "var(--ink-700)" }}
+                >
+                  {f.name}
+                </span>
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--ink-400)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {(f.size / 1024).toFixed(0)} KB
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function KnowledgeBaseSection({ agentId, clientId }) {
   const [uploading, setUploading] = useState(false);
@@ -77,7 +200,6 @@ function KnowledgeBaseSection({ agentId, clientId }) {
       toast.error("Maximum 5 knowledge bases per agent.");
       return;
     }
-
     setUploading(true);
     const form = new FormData();
     form.append("file", file);
@@ -85,11 +207,9 @@ function KnowledgeBaseSection({ agentId, clientId }) {
     form.append("owner_id", agentId);
     form.append("client_id", clientId);
     form.append("name", kbName.trim());
-
     const res = await fetch("/api/kb/upload", { method: "POST", body: form });
     const json = await res.json();
     setUploading(false);
-
     if (!res.ok) {
       toast.error(json?.error?.message ?? "Upload failed.");
       return;
@@ -122,7 +242,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
       <div
         style={{
           display: "flex",
-          gap: "8px",
+          gap: 8,
           alignItems: "center",
           flexWrap: "wrap",
           marginBottom: "1rem",
@@ -132,7 +252,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
           value={kbName}
           onChange={(e) => setKbName(e.target.value)}
           placeholder="KB name"
-          style={{ ...s.input, flex: 1, minWidth: "160px" }}
+          style={{ ...s.input, flex: 1, minWidth: 160 }}
         />
         <label
           style={{
@@ -140,7 +260,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
             cursor: "pointer",
             display: "inline-flex",
             alignItems: "center",
-            minHeight: "44px",
+            minHeight: 44,
             padding: "8px 16px",
           }}
         >
@@ -159,7 +279,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
           No knowledge bases yet.
         </p>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {kbs.map((kb) => (
             <div key={kb.id} style={s.kbRow}>
               <div>
@@ -210,46 +330,56 @@ function KnowledgeBaseSection({ agentId, clientId }) {
   );
 }
 
-// ─── Webhook Section ──────────────────────────────────────────────────────────
-
 function WebhookSection({ agentId, agentType }) {
-  const webhookUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/api/webhooks/exotel/${agentId}`;
-
-  function handleCopy() {
-    navigator.clipboard.writeText(webhookUrl);
-    toast.success("Webhook URL copied.");
-  }
-
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const exotelUrl = `${origin}/api/webhooks/exotel/${agentId}`;
+  const plivoUrl = `${origin}/api/webhooks/plivo/${agentId}`;
   return (
     <div style={s.section}>
-      <h2 style={s.sectionTitle}>Exotel Webhook</h2>
-      <p style={s.hint}>
-        {agentType === "inbound"
-          ? "Set this URL in Exotel → App → Passthru App → URL field for your inbound number."
-          : "Set this URL in Exotel → Campaigns → Webhook URL field."}
-      </p>
-      <div
-        style={{
-          display: "flex",
-          gap: "8px",
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <code style={s.code}>{webhookUrl}</code>
-        <button onClick={handleCopy} style={s.btnPrimary}>
-          Copy
-        </button>
-      </div>
-      <p style={{ ...s.hint, marginTop: "0.75rem" }}>
-        ⚠️ Railway telephony server must be running and NEXTJS_URL env var set
-        for webhooks to work.
-      </p>
+      <h2 style={s.sectionTitle}>Webhook URLs</h2>
+      {[
+        {
+          label: "Exotel",
+          url: exotelUrl,
+          hint:
+            agentType === "inbound"
+              ? "Exotel → App → Passthru App → URL"
+              : "Exotel → Campaigns → Webhook URL",
+        },
+        {
+          label: "Plivo",
+          url: plivoUrl,
+          hint: "Plivo console → Phone Numbers → Answer URL",
+        },
+      ].map(({ label, url, hint }) => (
+        <div key={label} style={{ marginBottom: "1rem" }}>
+          <p style={{ ...s.hint, marginBottom: 6 }}>
+            <strong>{label}:</strong> {hint}
+          </p>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <code style={s.code}>{url}</code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(url);
+                toast.success("Copied.");
+              }}
+              style={s.btnPrimary}
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AgentDetailPage({ params }) {
   const { id } = use(params);
@@ -273,10 +403,13 @@ export default function AgentDetailPage({ params }) {
     language: "ml-IN",
     voice_id: "anand",
     llm_provider: "gemini-flash",
-    system_prompt: "",
+    prompt: "",
     greeting: "",
     exotel_number: "",
+    plivo_number: "",
     max_call_duration: 300,
+    facility_type: "polyclinic",
+    fallback_number: "",
   });
 
   useEffect(() => {
@@ -288,10 +421,13 @@ export default function AgentDetailPage({ params }) {
         language: agent.language ?? "ml-IN",
         voice_id: cfg.voice_id ?? "anand",
         llm_provider: cfg.llm_provider ?? "gemini-flash",
-        system_prompt: cfg.system_prompt ?? "",
+        prompt: cfg.prompt ?? "",
         greeting: cfg.greeting ?? "",
         exotel_number: cfg.exotel_number ?? "",
+        plivo_number: cfg.plivo_number ?? "",
         max_call_duration: cfg.max_call_duration ?? 300,
+        facility_type: cfg.facility_type ?? "polyclinic",
+        fallback_number: cfg.fallback_number ?? "",
       });
     }
   }, [agent]);
@@ -305,21 +441,15 @@ export default function AgentDetailPage({ params }) {
       toast.error("Agent name is required.");
       return;
     }
-    if (!form.system_prompt.trim()) {
+    if (!form.prompt.trim()) {
       toast.error("System prompt is required.");
       return;
     }
-    if (form.system_prompt.length > 8000) {
+    if (form.prompt.length > 8000) {
       toast.error("System prompt must be under 8000 characters.");
       return;
     }
-
-    const isComplete = !!(
-      form.system_prompt.trim() &&
-      form.language &&
-      form.voice_id
-    );
-
+    const isComplete = !!(form.prompt.trim() && form.language && form.voice_id);
     setSaving(true);
     const { error } = await supabase
       .from("agents")
@@ -331,24 +461,22 @@ export default function AgentDetailPage({ params }) {
         config: {
           voice_id: form.voice_id,
           llm_provider: form.llm_provider,
-          system_prompt: form.system_prompt.trim(),
+          prompt: form.prompt.trim(),
           greeting: form.greeting.trim(),
           exotel_number: form.exotel_number.trim(),
+          plivo_number: form.plivo_number.trim(),
           max_call_duration: Number(form.max_call_duration),
+          facility_type: form.facility_type,
+          fallback_number: form.fallback_number.trim(),
         },
       })
       .eq("id", id);
     setSaving(false);
-
     if (error) {
       toast.error(error.message ?? "Save failed.");
       return;
     }
-    toast.success(
-      isComplete
-        ? "Agent saved and activated!"
-        : "Agent saved. Add system prompt to activate.",
-    );
+    toast.success(isComplete ? "Agent saved and activated!" : "Agent saved.");
     mutate();
   }
 
@@ -368,15 +496,13 @@ export default function AgentDetailPage({ params }) {
     router.push("/dashboard/agents");
   }
 
-  if (isLoading) {
+  if (isLoading)
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div style={{ ...s.skeleton, width: "200px", height: "32px" }} />
-        <div style={{ ...s.skeleton, width: "100%", height: "300px" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ ...s.skeleton, width: 200, height: 32 }} />
+        <div style={{ ...s.skeleton, width: "100%", height: 300 }} />
       </div>
     );
-  }
-
   if (!agent) return <p style={s.hint}>Agent not found.</p>;
 
   return (
@@ -386,7 +512,7 @@ export default function AgentDetailPage({ params }) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "12px",
+          gap: 12,
           flexWrap: "wrap",
         }}
       >
@@ -395,24 +521,22 @@ export default function AgentDetailPage({ params }) {
           <p
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "10px",
+              fontSize: 10,
               color: "var(--ink-400)",
               margin: "2px 0 0",
-              letterSpacing: "0.05em",
             }}
           >
             ID: {id}
           </p>
         </div>
-        {/* Type badge */}
         <span
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "10px",
+            fontSize: 10,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             padding: "4px 10px",
-            borderRadius: "20px",
+            borderRadius: 20,
             background:
               agent.type === "inbound"
                 ? "rgba(37,99,235,0.1)"
@@ -426,15 +550,14 @@ export default function AgentDetailPage({ params }) {
         >
           {agent.type === "inbound" ? "↙ Inbound" : "↗ Outbound"}
         </span>
-        {/* Status badge */}
         <span
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "10px",
+            fontSize: 10,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             padding: "4px 10px",
-            borderRadius: "20px",
+            borderRadius: 20,
             background:
               agent.status === "active"
                 ? "rgba(22,163,74,0.1)"
@@ -453,22 +576,64 @@ export default function AgentDetailPage({ params }) {
         </button>
       </div>
 
-      {/* Setup banner */}
-      {agent.status === "inactive" && !form.system_prompt && (
+      {agent.status === "inactive" && !form.prompt && (
         <div
           style={{
             background: "rgba(37,99,235,0.06)",
             border: "1px solid rgba(37,99,235,0.2)",
-            borderRadius: "10px",
+            borderRadius: 10,
             padding: "1rem 1.25rem",
             fontSize: "0.84rem",
             color: "#2563EB",
           }}
         >
-          👋 Agent created! Add a system prompt, configure voice and language,
-          then click <strong>Save</strong> to activate.
+          👋 Agent created! Configure below and click <strong>Save</strong> to
+          activate.
         </div>
       )}
+
+      {/* Facility Type */}
+      <div style={s.section}>
+        <h2 style={s.sectionTitle}>Facility Type</h2>
+        <p style={s.hint}>
+          Changing this affects the onboarding form sent to new clients.
+        </p>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 10,
+          }}
+        >
+          {FACILITY_TYPES.map((f) => {
+            const active = form.facility_type === f.slug;
+            return (
+              <button
+                key={f.slug}
+                onClick={() => set("facility_type", f.slug)}
+                style={{
+                  border: `1px solid ${active ? "#f97316" : "var(--border)"}`,
+                  borderRadius: 8,
+                  padding: "12px 10px",
+                  cursor: "pointer",
+                  background: active ? "#fff7ed" : "var(--surface)",
+                  color: active ? "#c2410c" : "var(--ink-600)",
+                  fontWeight: active ? 600 : 400,
+                  fontFamily: "var(--font-sans)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 4,
+                  transition: "all 0.1s",
+                }}
+              >
+                <span style={{ fontSize: 22 }}>{f.icon}</span>
+                <span style={{ fontSize: 12 }}>{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Config */}
       <div style={s.section}>
@@ -476,7 +641,6 @@ export default function AgentDetailPage({ params }) {
         <div
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
-          {/* Client */}
           <div style={s.field}>
             <label style={s.label}>Client</label>
             <select
@@ -491,8 +655,6 @@ export default function AgentDetailPage({ params }) {
               ))}
             </select>
           </div>
-
-          {/* Name */}
           <div style={s.field}>
             <label style={s.label}>Agent Name *</label>
             <input
@@ -501,14 +663,8 @@ export default function AgentDetailPage({ params }) {
               style={s.input}
             />
           </div>
-
-          {/* Language + Voice */}
           <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px",
-            }}
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
           >
             <div style={s.field}>
               <label style={s.label}>Language</label>
@@ -539,8 +695,6 @@ export default function AgentDetailPage({ params }) {
               </select>
             </div>
           </div>
-
-          {/* LLM */}
           <div style={s.field}>
             <label style={s.label}>AI Model</label>
             <select
@@ -556,24 +710,37 @@ export default function AgentDetailPage({ params }) {
               </option>
             </select>
           </div>
-
-          {/* Exotel number */}
-          <div style={s.field}>
-            <label style={s.label}>
-              Exotel Number{" "}
-              {agent.type === "inbound"
-                ? "(number that rings this agent)"
-                : "(caller ID for outbound)"}
-            </label>
-            <input
-              value={form.exotel_number}
-              onChange={(e) => set("exotel_number", e.target.value)}
-              placeholder="e.g. 08088919191"
-              style={s.input}
-            />
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
+          >
+            <div style={s.field}>
+              <label style={s.label}>Exotel Number</label>
+              <input
+                value={form.exotel_number}
+                onChange={(e) => set("exotel_number", e.target.value)}
+                placeholder="e.g. 08088919191"
+                style={s.input}
+              />
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Plivo Number</label>
+              <input
+                value={form.plivo_number}
+                onChange={(e) => set("plivo_number", e.target.value)}
+                placeholder="e.g. +919876543210"
+                style={s.input}
+              />
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Fallback Number</label>
+              <input
+                value={form.fallback_number}
+                onChange={(e) => set("fallback_number", e.target.value)}
+                placeholder="e.g. +91 98765 43210"
+                style={s.input}
+              />
+            </div>
           </div>
-
-          {/* Max call duration */}
           <div style={s.field}>
             <label style={s.label}>Max Call Duration (seconds)</label>
             <input
@@ -582,11 +749,9 @@ export default function AgentDetailPage({ params }) {
               onChange={(e) => set("max_call_duration", e.target.value)}
               min={30}
               max={1800}
-              style={{ ...s.input, width: "140px" }}
+              style={{ ...s.input, width: 140 }}
             />
           </div>
-
-          {/* Greeting */}
           <div style={s.field}>
             <label style={s.label}>Greeting (first thing agent says)</label>
             <input
@@ -596,20 +761,18 @@ export default function AgentDetailPage({ params }) {
               style={s.input}
             />
           </div>
-
-          {/* System prompt */}
           <div style={s.field}>
             <label style={s.label}>
               What should this agent do? *
               <span style={{ float: "right", fontWeight: 400 }}>
-                {form.system_prompt.length}/8000
+                {form.prompt.length}/8000
               </span>
             </label>
             <textarea
-              value={form.system_prompt}
-              onChange={(e) => set("system_prompt", e.target.value)}
+              value={form.prompt}
+              onChange={(e) => set("prompt", e.target.value)}
               maxLength={8000}
-              rows={8}
+              rows={12}
               placeholder="You are a helpful voice assistant for [company]. Your job is to…"
               style={{
                 ...s.input,
@@ -622,22 +785,20 @@ export default function AgentDetailPage({ params }) {
         </div>
       </div>
 
-      {/* Knowledge Base */}
+      <OnboardingDataSection agentId={id} />
       <KnowledgeBaseSection agentId={id} clientId={agent.client_id} />
-
-      {/* Webhook */}
       <WebhookSection agentId={id} agentType={agent.type} />
 
       {/* Danger zone */}
       <div style={{ ...s.section, borderColor: "rgba(225,29,72,0.2)" }}>
         <h2 style={{ ...s.sectionTitle, color: "#E11D48" }}>Danger Zone</h2>
         <p style={s.hint}>Type the agent name to confirm deletion.</p>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             value={confirmName}
             onChange={(e) => setConfirmName(e.target.value)}
             placeholder={agent.name}
-            style={{ ...s.input, width: "220px" }}
+            style={{ ...s.input, width: 220 }}
           />
           <button
             onClick={handleDelete}
@@ -658,8 +819,6 @@ export default function AgentDetailPage({ params }) {
   );
 }
 
-// ─── Styles — all CSS vars for dark/light support ─────────────────────────────
-
 const s = {
   pageTitle: {
     fontFamily: "var(--font-serif)",
@@ -671,7 +830,7 @@ const s = {
   section: {
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    borderRadius: "10px",
+    borderRadius: 10,
     padding: "1.5rem",
   },
   sectionTitle: {
@@ -681,10 +840,10 @@ const s = {
     color: "var(--ink-700)",
     margin: "0 0 1rem",
   },
-  field: { display: "flex", flexDirection: "column", gap: "6px" },
+  field: { display: "flex", flexDirection: "column", gap: 6 },
   label: {
     fontFamily: "var(--font-mono)",
-    fontSize: "9px",
+    fontSize: 9,
     letterSpacing: "0.1em",
     textTransform: "uppercase",
     color: "var(--ink-500)",
@@ -692,27 +851,27 @@ const s = {
   },
   input: {
     border: "1px solid var(--border)",
-    borderRadius: "6px",
+    borderRadius: 6,
     padding: "8px 10px",
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
     color: "var(--ink-900)",
     background: "var(--surface)",
     outline: "none",
-    minHeight: "36px",
+    minHeight: 36,
     width: "100%",
     boxSizing: "border-box",
   },
   select: {
     border: "1px solid var(--border)",
-    borderRadius: "6px",
+    borderRadius: 6,
     padding: "8px 10px",
     fontSize: "0.84rem",
     fontFamily: "var(--font-sans)",
     color: "var(--ink-900)",
     background: "var(--surface)",
     outline: "none",
-    minHeight: "36px",
+    minHeight: 36,
     cursor: "pointer",
     width: "100%",
   },
@@ -720,7 +879,7 @@ const s = {
   code: {
     background: "var(--surface-2)",
     border: "1px solid var(--border)",
-    borderRadius: "6px",
+    borderRadius: 6,
     padding: "8px 12px",
     fontSize: "0.78rem",
     fontFamily: "var(--font-mono)",
@@ -734,47 +893,47 @@ const s = {
     justifyContent: "space-between",
     background: "var(--surface-2)",
     border: "1px solid var(--border)",
-    borderRadius: "8px",
+    borderRadius: 8,
     padding: "10px 14px",
   },
   btnPrimary: {
     background: "#2563EB",
     color: "#fff",
     border: "none",
-    borderRadius: "7px",
+    borderRadius: 7,
     padding: "8px 18px",
     fontSize: "0.84rem",
     fontWeight: 500,
     cursor: "pointer",
-    minHeight: "44px",
+    minHeight: 44,
     fontFamily: "var(--font-sans)",
   },
   btnGhost: {
     background: "transparent",
     color: "var(--ink-500)",
     border: "1px solid var(--border)",
-    borderRadius: "7px",
+    borderRadius: 7,
     padding: "8px 14px",
     fontSize: "0.84rem",
     cursor: "pointer",
-    minHeight: "44px",
+    minHeight: 44,
     fontFamily: "var(--font-sans)",
   },
   btnDelete: {
     background: "transparent",
     color: "var(--ink-400)",
     border: "1px solid var(--border)",
-    borderRadius: "6px",
+    borderRadius: 6,
     padding: "4px 10px",
     fontSize: "0.78rem",
     cursor: "pointer",
-    minHeight: "32px",
+    minHeight: 32,
     fontFamily: "var(--font-sans)",
     transition: "all 0.15s",
   },
   skeleton: {
     background: "var(--border)",
-    borderRadius: "4px",
+    borderRadius: 4,
     animation: "pulse 1.4s ease-in-out infinite",
   },
 };
