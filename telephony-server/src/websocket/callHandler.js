@@ -1,13 +1,13 @@
-/**
+﻿/**
  * telephony-server/src/websocket/callHandler.js
  *
  * Handles one Exotel AgentStream WebSocket connection per call.
  *
  * Flow:
- *   connected → start → media (repeated) → stop
+ *   connected -> start -> media (repeated) -> stop
  *
  * Pipeline per utterance:
- *   VAD detects silence → Sarvam STT → RAG + Gemini LLM → Sarvam TTS → send PCM chunks
+ *   VAD detects silence -> Sarvam STT -> RAG + Gemini LLM -> Sarvam TTS -> send PCM chunks
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -18,7 +18,7 @@ import { synthesizeSpeech } from "../pipeline/tts.js";
 import { stripWavHeader, chunkPcm } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
 
-const VAD_SILENCE_THRESHOLD = 300; // RMS — tune after testing
+const VAD_SILENCE_THRESHOLD = 300; // RMS - tune after testing
 const VAD_SILENCE_DURATION = 1500; // ms silence before STT
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
@@ -30,7 +30,7 @@ const supabase = createClient(
   { realtime: { transport: ws } },
 );
 
-export function handleCall(ws, req, provider = "exotel") {
+export function handleCall(ws, req) {
   const url = new URL(req.url, "wss://localhost");
   const agentId = url.searchParams.get("agent_id");
   const lang = url.searchParams.get("lang") ?? "ml-IN";
@@ -51,7 +51,7 @@ export function handleCall(ws, req, provider = "exotel") {
 
   console.log(`[call] New connection agentId=${agentId}`);
 
-  // ── Load agent from Supabase ───────────────────────────────────────────────
+  // â”€â”€ Load agent from Supabase â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async function loadAgent() {
     if (!agentId) {
@@ -71,7 +71,7 @@ export function handleCall(ws, req, provider = "exotel") {
     console.log(`[call] Agent loaded: ${agent.name}`);
   }
 
-  // ── Send audio back to caller ──────────────────────────────────────────────
+  // â”€â”€ Send audio back to caller â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function sendAudio(pcmBuffer) {
     if (!streamSid || ws.readyState !== 1) return;
@@ -101,7 +101,7 @@ export function handleCall(ws, req, provider = "exotel") {
     isBotSpeaking = false;
   }
 
-  // ── VAD ───────────────────────────────────────────────────────────────────
+  // â”€â”€ VAD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function getRMS(pcm) {
     let sum = 0;
@@ -123,7 +123,7 @@ export function handleCall(ws, req, provider = "exotel") {
     }, VAD_SILENCE_DURATION);
   }
 
-  // ── Pipeline ───────────────────────────────────────────────────────────────
+  // â”€â”€ Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async function runPipeline(pcmBuffer) {
     if (isProcessing || !agent) return;
@@ -219,7 +219,7 @@ export function handleCall(ws, req, provider = "exotel") {
     }
   }
 
-  // ── Message handler ────────────────────────────────────────────────────────
+  // â”€â”€ Message handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   ws.on("message", async (data) => {
     let msg;
@@ -236,10 +236,7 @@ export function handleCall(ws, req, provider = "exotel") {
 
       case "start":
         streamSid = msg.stream_sid ?? msg.start?.stream_sid;
-        callSid =
-          provider === "plivo"
-            ? (msg.start?.callId ?? msg.start?.call_sid)
-            : msg.start?.call_sid;
+        callSid = msg.start?.call_sid;
         callStart = Date.now();
         console.log(`[call] start callSid=${callSid}`);
 

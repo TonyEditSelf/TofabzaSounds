@@ -6,14 +6,14 @@
     }
   ],
   "functions": {
-    "app/api/stt/route.js": {
-      "maxDuration": 30
-    },
-    "app/api/tts/route.js": {
-      "maxDuration": 30
-    },
     "app/api/kb/upload/route.js": {
       "maxDuration": 60
+    },
+    "app/api/voices/preview/route.js": {
+      "maxDuration": 15
+    },
+    "app/api/voices/google-preview/route.js": {
+      "maxDuration": 15
     },
     "app/api/campaigns/[id]/launch/route.js": {
       "maxDuration": 60

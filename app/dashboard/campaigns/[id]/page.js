@@ -316,7 +316,7 @@ export default function CampaignDetailPage() {
       return;
     }
 
-    const { error } = await supabase.from("campaign_contacts").insert(contacts);
+    const { error } = await supabase.from("contacts").insert(contacts);
     setUploadingCSV(false);
     e.target.value = "";
 
@@ -331,7 +331,7 @@ export default function CampaignDetailPage() {
   // ── delete contacts ──────────────────────────────────────────────────────────
   async function handleClearContacts() {
     const { error } = await supabase
-      .from("campaign_contacts")
+      .from("contacts")
       .delete()
       .eq("campaign_id", id);
     if (error) showToast("Failed to clear contacts", "error");
@@ -344,7 +344,7 @@ export default function CampaignDetailPage() {
   async function handleRetry() {
     setLaunching(true);
     await supabase
-      .from("campaign_contacts")
+      .from("contacts")
       .update({ status: "pending" })
       .eq("campaign_id", id)
       .in("status", ["failed", "no_answer"]);

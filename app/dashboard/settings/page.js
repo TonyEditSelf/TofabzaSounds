@@ -99,8 +99,8 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 4 }}>
-          Global defaults and API credentials. Agent/widget configs override
-          these individually.
+          Global defaults and API credentials. Agent configs override these
+          individually.
         </p>
       </div>
 
@@ -225,7 +225,7 @@ export default function SettingsPage() {
 
       <Section
         title="AI & call defaults"
-        subtitle="Pre-filled when creating a new agent or widget"
+        subtitle="Pre-filled when creating a new agent"
         icon="🤖"
       >
         <TextareaField
@@ -294,15 +294,6 @@ export default function SettingsPage() {
           onChange={(v) => set("support_email", v)}
           placeholder="support@yourdomain.com"
         />
-        <TextField
-          label="Widget base URL"
-          value={form.widget_base_url ?? ""}
-          onChange={(v) => set("widget_base_url", v)}
-          placeholder="https://capsule.yourdomain.com"
-        />
-        <p className="text-xs text-muted-foreground pl-[172px]">
-          Widget base URL fixes the hardcoded localhost in embed.js.
-        </p>
       </Section>
 
       {error && (

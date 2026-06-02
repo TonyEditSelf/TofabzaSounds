@@ -35,11 +35,7 @@ export async function POST(req) {
     // StatusCallback URL must be set as:
     // /api/webhooks/exotel/status?secret=YOUR_INTERNAL_API_SECRET
     // Verify via header instead of URL query param (secrets don't belong in URLs)
-    const secret = req.headers.get("x-internal-secret");
-    if (!secret || secret !== process.env.INTERNAL_API_SECRET) {
-      console.warn("[exotel/status] invalid or missing secret — rejecting");
-      return NextResponse.json({ ok: false }, { status: 401 });
-    }
+    // Exotel doesn't send custom headers — verify CallSid exists in DB instead (done below)
 
     // Replay protection — reject if same CallSid already finalized
 

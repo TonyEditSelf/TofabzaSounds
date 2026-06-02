@@ -4,7 +4,7 @@
  * app/dashboard/clients/[id]/page.js
  *
  * Header: client name + contact info + edit button
- * Tabs: Agents | Widgets | Campaigns | Costs
+ * Tabs: Agents | Campaigns | Costs
  */
 
 import { useState, use } from "react";
@@ -33,16 +33,6 @@ async function fetchAgents(id) {
   const { data, error } = await supabase
     .from("agents")
     .select("id, name, type, status, language, created_at")
-    .eq("client_id", id)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
-}
-
-async function fetchWidgets(id) {
-  const { data, error } = await supabase
-    .from("widgets")
-    .select("id, name, status, version, created_at")
     .eq("client_id", id)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -110,9 +100,7 @@ async function fetchChecklist(clientId) {
       intake_submitted: submittedSet.has(a.id),
       agent_created: true,
       kb_uploaded: (kbMap[a.id] ?? 0) > 0,
-      telephony_configured: !!(
-        a.config?.exotel_number || a.config?.plivo_number
-      ),
+      telephony_configured: !!a.config?.exotel_number,
       test_call_passed: !!a.config?.test_call_passed,
       live: a.status === "active",
     },
@@ -298,44 +286,6 @@ function AgentsTab({ clientId }) {
               style={{ ...s.td, color: "var(--ink-400)", fontSize: "0.78rem" }}
             >
               {new Date(a.created_at).toLocaleDateString("en-IN", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              })}
-            </td>
-          </tr>
-        )) ?? null
-      }
-    />
-  );
-}
-
-function WidgetsTab({ clientId }) {
-  const { data: widgets } = useSWR(`widgets:${clientId}`, () =>
-    fetchWidgets(clientId),
-  );
-  const router = useRouter();
-
-  return (
-    <SimpleTable
-      headers={["Name", "Status", "Version", "Created"]}
-      empty="No widgets yet."
-      rows={
-        widgets?.map((w) => (
-          <tr
-            key={w.id}
-            style={{ ...s.tr, cursor: "pointer" }}
-            onClick={() => router.push(`/dashboard/widgets/${w.id}`)}
-          >
-            <td style={{ ...s.td, fontWeight: 500 }}>{w.name}</td>
-            <td style={s.td}>
-              <StatusBadge status={w.status} />
-            </td>
-            <td style={s.td}>v{w.version}</td>
-            <td
-              style={{ ...s.td, color: "var(--ink-400)", fontSize: "0.78rem" }}
-            >
-              {new Date(w.created_at).toLocaleDateString("en-IN", {
                 day: "numeric",
                 month: "short",
                 year: "numeric",
@@ -1101,7 +1051,7 @@ function DeleteDataModal({ clientName, clientId, onClose }) {
                 margin: "0 0 20px",
               }}
             >
-              All call logs, transcripts, widget sessions and tokens for{" "}
+              All call logs and transcripts for{" "}
               <strong>{clientName}</strong> have been wiped.
             </p>
             <button onClick={onClose} style={s.btnGhost}>
@@ -1127,8 +1077,8 @@ function DeleteDataModal({ clientName, clientId, onClose }) {
                 margin: "0 0 16px",
               }}
             >
-              This permanently wipes all call logs, transcripts, widget sessions
-              and tokens for <strong>{clientName}</strong>. Cannot be undone.
+              This permanently wipes all call logs and transcripts for{" "}
+              <strong>{clientName}</strong>. Cannot be undone.
             </p>
             <label style={s.label}>Type DELETE to confirm</label>
             <input
@@ -1360,7 +1310,6 @@ function ChecklistTab({ clientId }) {
 
 const TABS = [
   "Agents",
-  "Widgets",
   "Campaigns",
   "Costs",
   "Invoice",
@@ -1461,7 +1410,6 @@ export default function ClientDetailPage({ params }) {
       {/* Tab content */}
       <div style={{ marginTop: "1.25rem" }}>
         {activeTab === "Agents" && <AgentsTab clientId={id} />}
-        {activeTab === "Widgets" && <WidgetsTab clientId={id} />}
         {activeTab === "Campaigns" && <CampaignsTab clientId={id} />}
         {activeTab === "Costs" && <CostsTab clientId={id} />}
         {activeTab === "Invoice" && (

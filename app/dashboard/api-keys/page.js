@@ -845,10 +845,10 @@ export default function ApiKeysPage() {
                 overflowX: "auto",
                 background: "var(--surface-2)",
               }}
-            >{`curl -X POST https://your-app.vercel.app/api/chat \\
+            >{`curl -X POST https://your-app.vercel.app/api/voices/preview \\
   -H "Authorization: Bearer tf_live_xxxxxxxxxxxx" \\
   -H "Content-Type: application/json" \\
-  -d '{ "message": "Hello" }'`}</pre>
+  -d '{ "voice_id": "anand", "text": "Hello", "languageCode": "en-IN" }'`}</pre>
           </div>
         )}
       </div>

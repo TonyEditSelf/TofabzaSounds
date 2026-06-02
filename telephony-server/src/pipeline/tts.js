@@ -41,7 +41,7 @@ export async function synthesizeSpeech({
         target_language_code: language,
         speaker,
         pace: safePace,
-        speech_sample_rate: 8000, // 8kHz for telephony (Exotel G.711)
+        speech_sample_rate: 16000, // 16kHz PCM — required by Exotel AgentStream
         model: "bulbul:v3",
         temperature: 0.6,
       },

@@ -4,7 +4,7 @@
  * app/dashboard/page.js — Overview dashboard
  *
  * Shows:
- *   - 4 stat cards: active agents, active widgets, calls today, cost this month
+ *   - 4 stat cards: active agents, active campaigns, calls today, cost this month
  *   - Recent calls table (last 10)
  *
  * All data is filtered by activeClientId from Zustand (null = all clients).
@@ -20,10 +20,6 @@ import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 
-/**
- * @param {string} key - SWR cache key (encodes clientId)
- * @returns {Promise<Object>}
- */
 async function fetchStats(key) {
   const clientId = key.split(":")[1] || null;
 
@@ -32,8 +28,8 @@ async function fetchStats(key) {
     .select("id", { count: "exact", head: true })
     .eq("status", "active");
 
-  let widgetsQ = supabase
-    .from("widgets")
+  let campaignsQ = supabase
+    .from("campaigns")
     .select("id", { count: "exact", head: true })
     .eq("status", "active");
 
@@ -56,14 +52,14 @@ async function fetchStats(key) {
 
   if (clientId) {
     agentsQ = agentsQ.eq("client_id", clientId);
-    widgetsQ = widgetsQ.eq("client_id", clientId);
+    campaignsQ = campaignsQ.eq("client_id", clientId);
     callsQ = callsQ.eq("client_id", clientId);
     costsQ = costsQ.eq("client_id", clientId);
   }
 
-  const [agents, widgets, calls, costs] = await Promise.all([
+  const [agents, campaigns, calls, costs] = await Promise.all([
     agentsQ,
-    widgetsQ,
+    campaignsQ,
     callsQ,
     costsQ,
   ]);
@@ -75,16 +71,12 @@ async function fetchStats(key) {
 
   return {
     agents: agents.count ?? 0,
-    widgets: widgets.count ?? 0,
+    campaigns: campaigns.count ?? 0,
     callsToday: calls.count ?? 0,
     monthCost,
   };
 }
 
-/**
- * @param {string} key - SWR cache key (encodes clientId)
- * @returns {Promise<Array>}
- */
 async function fetchRecentCalls(key) {
   const clientId = key.split(":")[1] || null;
 
@@ -129,7 +121,6 @@ function StatCard({ label, value, sub, loading }) {
       </div>
     );
   }
-
   return (
     <div style={s.card}>
       <p style={s.cardLabel}>{label}</p>
@@ -142,8 +133,6 @@ function StatCard({ label, value, sub, loading }) {
 function CallRow({ call }) {
   const router = useRouter();
   const dir = call.direction === "inbound" ? "↙" : "↗";
-  const color =
-    call.direction === "inbound" ? "var(--saffron-500)" : "var(--saffron-500)";
   const date = new Date(call.started_at);
 
   return (
@@ -151,7 +140,7 @@ function CallRow({ call }) {
       style={{ ...s.tr, cursor: "pointer" }}
       onClick={() => router.push(`/dashboard/calls/${call.id}`)}
     >
-      <td style={{ ...s.td, color }}>
+      <td style={{ ...s.td, color: "var(--saffron-500)" }}>
         {dir} {call.direction}
       </td>
       <td style={s.td}>{call.caller_number ?? "—"}</td>
@@ -211,9 +200,9 @@ export default function DashboardPage() {
       sub: "inbound + outbound",
     },
     {
-      label: "Active Widgets",
-      value: stats?.widgets ?? "—",
-      sub: "deployed on client sites",
+      label: "Active Campaigns",
+      value: stats?.campaigns ?? "—",
+      sub: "running now",
     },
     {
       label: "Calls Today",
@@ -235,7 +224,6 @@ export default function DashboardPage() {
 
   return (
     <div>
-      {/* Page header */}
       <div style={s.pageHeader}>
         <h1 style={s.pageTitle}>Overview</h1>
         {activeClientId && (
@@ -243,17 +231,14 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Stat cards */}
       <div style={s.grid}>
         {STATS.map((stat) => (
           <StatCard key={stat.label} {...stat} loading={statsLoading} />
         ))}
       </div>
 
-      {/* Recent calls */}
       <div style={s.section}>
         <h2 style={s.sectionTitle}>Recent Calls</h2>
-
         <div style={s.tableWrap}>
           <table style={s.table}>
             <thead>
@@ -346,7 +331,6 @@ const s = {
     letterSpacing: "0.12em",
     textTransform: "uppercase",
     color: "var(--ink-400)",
-    marginBottom: "0.5rem",
     margin: "0 0 0.5rem",
   },
   cardValue: {
@@ -357,11 +341,7 @@ const s = {
     margin: "0 0 4px",
     lineHeight: 1,
   },
-  cardSub: {
-    fontSize: "0.78rem",
-    color: "var(--ink-400)",
-    margin: 0,
-  },
+  cardSub: { fontSize: "0.78rem", color: "var(--ink-400)", margin: 0 },
   section: {
     background: "var(--surface)",
     border: "1px solid var(--border)",
@@ -377,14 +357,8 @@ const s = {
     padding: "1rem 1.25rem",
     borderBottom: "1px solid var(--border)",
   },
-  tableWrap: {
-    overflowX: "auto",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: "0.8375rem",
-  },
+  tableWrap: { overflowX: "auto" },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: "0.8375rem" },
   th: {
     textAlign: "left",
     padding: "0.625rem 1rem",
@@ -397,9 +371,7 @@ const s = {
     whiteSpace: "nowrap",
     fontWeight: 500,
   },
-  tr: {
-    borderBottom: "1px solid var(--border)",
-  },
+  tr: { borderBottom: "1px solid var(--border)" },
   td: {
     padding: "0.75rem 1rem",
     color: "var(--ink-700)",
@@ -410,7 +382,7 @@ const s = {
     fontWeight: 500,
     color:
       status === "completed"
-        ? "var(--emerald-600)"
+        ? "#16a34a"
         : status === "failed"
           ? "var(--crimson-500)"
           : "var(--ink-500)",

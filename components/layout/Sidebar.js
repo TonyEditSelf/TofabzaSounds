@@ -16,7 +16,6 @@ const NAV = [
   null,
   { href: "/dashboard/voice-explorer", label: "Voice Explorer", icon: "◉" },
   { href: "/dashboard/agents", label: "Agents", icon: "⬡" },
-  { href: "/dashboard/widgets", label: "Widgets", icon: "⬢" },
   null,
   { href: "/dashboard/campaigns", label: "Campaigns", icon: "▷" },
   { href: "/dashboard/onboarding", label: "Onboarding", icon: "📋" },
@@ -48,21 +47,17 @@ export default function Sidebar() {
   const router = useRouter();
   const supabase = createClient();
 
-  // Zustand
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const closeSidebar = useUIStore((s) => s.closeSidebar);
   const themeMode = useUIStore((s) => s.themeMode);
   const toggleThemeMode = useUIStore((s) => s.toggleThemeMode);
   const activeClientId = useUIStore((s) => s.activeClientId);
-  const activeClientName = useUIStore((s) => s.activeClientName);
   const setClientFilter = useUIStore((s) => s.setClientFilter);
 
-  // Clients list
   const { data: clients = [] } = useSWR("sidebar-clients", fetchClients, {
     revalidateOnFocus: false,
   });
 
-  // Close sidebar on route change (mobile)
   useEffect(() => {
     closeSidebar();
   }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -82,11 +77,8 @@ export default function Sidebar() {
     }
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-
   return (
     <>
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
           onClick={closeSidebar}
@@ -95,7 +87,6 @@ export default function Sidebar() {
             inset: 0,
             background: "rgba(0,0,0,0.5)",
             zIndex: 49,
-            display: "block",
           }}
         />
       )}
@@ -112,11 +103,9 @@ export default function Sidebar() {
           flexDirection: "column",
           zIndex: 50,
           borderRight: "1px solid rgba(255,255,255,0.05)",
-          // Mobile: slide in/out
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 0.22s ease",
         }}
-        // Desktop: always visible
         className="sidebar-desktop"
       >
         {/* Logo */}
@@ -126,7 +115,6 @@ export default function Sidebar() {
               <div style={s.logoTitle}>Tofabza Sounds</div>
               <div style={s.logoSub}>Agency Console</div>
             </div>
-
             <button
               type="button"
               onClick={toggleThemeMode}
@@ -235,12 +223,9 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {/* Desktop override — always visible above md breakpoint */}
       <style>{`
         @media (min-width: 768px) {
-          .sidebar-desktop {
-            transform: translateX(0) !important;
-          }
+          .sidebar-desktop { transform: translateX(0) !important; }
         }
       `}</style>
     </>
@@ -310,10 +295,7 @@ const s = {
     boxShadow: "0 2px 6px rgba(0,0,0,0.28)",
     transition: "transform 0.18s ease",
   },
-  themeToggleLabel: {
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-  },
+  themeToggleLabel: { letterSpacing: "0.04em", textTransform: "uppercase" },
   filterWrap: {
     padding: "0.75rem 1rem",
     borderBottom: "1px solid rgba(255,255,255,0.07)",
@@ -331,11 +313,7 @@ const s = {
     cursor: "pointer",
     outline: "none",
   },
-  nav: {
-    flex: 1,
-    padding: "0.5rem 0.625rem",
-    overflowY: "auto",
-  },
+  nav: { flex: 1, padding: "0.5rem 0.625rem", overflowY: "auto" },
   divider: {
     height: "1px",
     background: "rgba(255,255,255,0.07)",
@@ -353,11 +331,7 @@ const s = {
     cursor: "pointer",
     marginBottom: "1px",
   },
-  icon: {
-    fontSize: "14px",
-    opacity: 0.9,
-    minWidth: "16px",
-  },
+  icon: { fontSize: "14px", opacity: 0.9, minWidth: "16px" },
   dot: {
     width: "5px",
     height: "5px",

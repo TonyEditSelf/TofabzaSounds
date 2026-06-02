@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -47,7 +47,6 @@ export default function NewAgentPage() {
     type: "inbound",
     facility_type: "polyclinic",
     whatsapp_number: "",
-    plivo_number: "",
   });
 
   const { data: clients = [] } = useSWR("clients-list", fetchClients, {
@@ -93,7 +92,6 @@ export default function NewAgentPage() {
           greeting: "",
           facility_type: form.facility_type,
           whatsapp_number: form.whatsapp_number || undefined,
-          plivo_number: form.plivo_number || undefined,
         },
       })
       .select("id, name")
@@ -113,7 +111,7 @@ export default function NewAgentPage() {
     setCreatedAgent(agent);
   }
 
-  /* ── Success screen ──────────────────────────────────── */
+  /* Success screen */
   if (createdAgent) {
     const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tofabza.com";
     const onboardUrl = `${APP_URL}/onboard/${createdAgent.id}`;
@@ -239,7 +237,7 @@ export default function NewAgentPage() {
     );
   }
 
-  /* ── Form ────────────────────────────────────────────── */
+  /* Form */
   return (
     <div>
       <h1 style={s.pageTitle}>New Agent</h1>
@@ -336,22 +334,6 @@ export default function NewAgentPage() {
               : "Makes outgoing calls to a contact list via campaigns."}
           </p>
         </div>
-
-        {/* Plivo Number */}
-        <div style={s.field}>
-          <label style={s.label}>Plivo Number</label>
-          <input
-            style={s.input}
-            type="tel"
-            placeholder="+91 98765 43210"
-            value={form.plivo_number}
-            onChange={(e) => set("plivo_number", e.target.value)}
-          />
-          <p style={s.hint}>
-            E.164 format. Used when TELEPHONY_PROVIDER=plivo.
-          </p>
-        </div>
-
         {/* WhatsApp */}
         <div style={s.field}>
           <label style={s.label}>Client WhatsApp Number</label>

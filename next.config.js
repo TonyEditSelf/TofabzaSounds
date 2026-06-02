@@ -1,20 +1,20 @@
-/**
- * next.config.js — Tofabza Sounds Platform
+﻿/**
+ * next.config.js â€” Tofabza Sounds Platform
  *
  * Rules:
  *  - JavaScript only, never next.config.ts
  *  - React Compiler enabled (stable in Next.js 16)
- *  - All routes dynamic by default — opt-in caching via "use cache" directive only
+ *  - All routes dynamic by default â€” opt-in caching via "use cache" directive only
  *  - Three.js imports restricted to /(marketing) routes only
- *  - ffmpeg never runs on Vercel — telephony-server on Railway handles it
+ *  - ffmpeg never runs on Vercel â€” telephony-server on Railway handles it
  */
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ── Experimental ──────────────────────────────────────────────────────────
+  // â”€â”€ Experimental â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   reactCompiler: true,
 
-  // ── Images ────────────────────────────────────────────────────────────────
+  // â”€â”€ Images â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   images: {
     remotePatterns: [
       {
@@ -24,12 +24,12 @@ const nextConfig = {
     ],
   },
 
-  // ── Security & CSP headers ────────────────────────────────────────────────
+  // â”€â”€ Security & CSP headers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async headers() {
     return [
       {
         // Dashboard + API routes
-        source: "/((?!_next/static|_next/image|favicon.ico|widget).*)",
+        source: "/((?!_next/static|_next/image|favicon.ico).*)",
         headers: [
           {
             key: "Content-Security-Policy",
@@ -53,57 +53,13 @@ const nextConfig = {
           },
         ],
       },
-      {
-        // Widget embed script
-        source: "/widget/:path*",
-        headers: [
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Cache-Control", value: "public, max-age=3600" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-        ],
-      },
-      {
-        source: "/api/widget/:path*",
-        headers: [
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type" },
-        ],
-      },
-      {
-        source: "/api/stt",
-        headers: [
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "POST, OPTIONS" },
-          {
-            key: "Access-Control-Allow-Headers",
-            value: "Content-Type, X-Audio-Mime",
-          },
-        ],
-      },
-      {
-        source: "/api/tts",
-        headers: [
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type" },
-        ],
-      },
-      {
-        source: "/api/chat",
-        headers: [
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type" },
-        ],
-      },
     ];
   },
 
-  // ── Redirects ─────────────────────────────────────────────────────────────
+  // â”€â”€ Redirects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async redirects() {
     return [
-      // Root → dashboard for logged-in users (middleware handles auth redirect)
+      // Root â†’ dashboard for logged-in users (middleware handles auth redirect)
       {
         source: "/",
         destination: "/dashboard",
@@ -112,7 +68,7 @@ const nextConfig = {
     ];
   },
 
-  // ── Turbopack: stub Three.js (browser-only) ───────────────────────────────
+  // â”€â”€ Turbopack: stub Three.js (browser-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // turbopack: {
   //   resolveAlias: {
   //     three: false,
@@ -121,17 +77,14 @@ const nextConfig = {
   //   },
   // },
 
-  // ── Logging ───────────────────────────────────────────────────────────────
+  // â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   logging: {
     fetches: {
       fullUrl: process.env.NODE_ENV === "development",
     },
   },
 
-  // ── Vercel-specific ───────────────────────────────────────────────────────
-  // Increase max duration for /api/stt and /api/tts proxy routes
-  // (set per-route via route segment config — this is the global fallback)
-  // Free tier: 10s. Pro: 300s. Set to 25s as safe default for audio proxying.
+  // â”€â”€ Vercel-specific â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   serverExternalPackages: ["@node-rs/argon2"], // example native dep if added later
 };
 

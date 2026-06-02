@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import useSWR from "swr";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { BULBUL_V3_SPEAKERS } from "@/lib/sarvam/voices";
+import { GOOGLE_VOICES } from "@/lib/google/voices";
 import { useUIStore } from "@/store/ui";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -23,8 +23,14 @@ const LANGUAGES = [
 ];
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
-const STYLES = ["All", "Conversational", "IVR", "Sales", "Newscast"];
 const GENDERS = ["All", "Male", "Female"];
+
+const TIER_LABELS = {
+  wavenet: "WaveNet",
+  neural2: "Neural2",
+  standard: "Standard",
+  chirp3: "Chirp 3",
+};
 
 const DEFAULT_TEXTS = {
   "ml-IN": "നമസ്കാരം, ഞാൻ നിങ്ങളെ എങ്ങനെ സഹായിക്കാം?",
@@ -43,13 +49,11 @@ const DEFAULT_TEXTS = {
 // ─── AudioContext singleton ───────────────────────────────────────────────────
 
 let _audioCtx = null;
-
 function getAudioContext() {
   if (!_audioCtx)
     _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   return _audioCtx;
 }
-
 async function resumeAudioContext() {
   const ctx = getAudioContext();
   if (ctx.state === "suspended") await ctx.resume();
@@ -75,7 +79,6 @@ function Waveform({ analyserRef, playing }) {
     const analyser = analyserRef.current;
     const bufLen = analyser.frequencyBinCount;
     const data = new Uint8Array(bufLen);
-
     function draw() {
       rafRef.current = requestAnimationFrame(draw);
       analyser.getByteTimeDomainData(data);
@@ -134,7 +137,7 @@ function Waveform({ analyserRef, playing }) {
 
 // ─── Voice Card ───────────────────────────────────────────────────────────────
 
-function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
+function VoiceCard({ voice, provider, previewText, speed, lang, onFavToggle }) {
   const themeMode = useUIStore((s) => s.themeMode);
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -144,8 +147,6 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
 
   async function handlePreview() {
     if (loading) return;
-
-    // iOS AudioContext unblock
     let ctx;
     try {
       ctx = await resumeAudioContext();
@@ -153,13 +154,10 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
       setBlocked(true);
       return;
     }
-
     if (!previewText.trim()) {
-      toast.error("Didn't catch that. Please try again.");
+      toast.error("Enter preview text first.");
       return;
     }
-
-    // Stop current playback
     if (sourceRef.current) {
       try {
         sourceRef.current.stop();
@@ -169,7 +167,11 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/voices/preview", {
+      const endpoint =
+        provider === "google"
+          ? "/api/voices/google-preview"
+          : "/api/voices/preview";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -181,43 +183,34 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
         signal: AbortSignal.timeout(10_000),
       });
 
-      if (!res.ok) throw new Error("Sarvam API error");
+      if (!res.ok) throw new Error(`${provider} TTS error`);
 
       const arrayBuffer = await res.arrayBuffer();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-      // Waveform analyser
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.playbackRate.value = 1; // speed applied server-side via Sarvam
       source.connect(analyser);
       analyser.connect(ctx.destination);
       sourceRef.current = source;
-
       source.onended = () => setPlaying(false);
       source.start();
       setPlaying(true);
     } catch (err) {
-      if (err.name === "AbortError" || err.message.includes("Sarvam")) {
-        toast.error("Voice preview unavailable. Try again in a moment.", {
-          action: { label: "Retry", onClick: handlePreview },
-        });
-      } else {
-        toast.error("Preview failed.");
-      }
+      toast.error("Voice preview failed. Try again.", {
+        action: { label: "Retry", onClick: handlePreview },
+      });
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleFav() {
-    const next = !voice.is_favourite;
-    onFavToggle(voice.id, next);
-  }
+  // Google voices use voice_id as id; Sarvam uses id
+  const voiceKey = voice.id ?? voice.voice_id;
 
   return (
     <div style={s.card}>
@@ -240,13 +233,26 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
             }}
           >
             {voice.gender && <span style={s.tag}>{voice.gender}</span>}
+            {/* Google: show tier. Sarvam: show style */}
+            {voice.tier && (
+              <span
+                style={{
+                  ...s.tag,
+                  background: "#0f2744",
+                  border: "1px solid #1e3a5f",
+                  color: "#60a5fa",
+                }}
+              >
+                {TIER_LABELS[voice.tier] ?? voice.tier}
+              </span>
+            )}
             {voice.style && (
               <span
                 style={{
                   ...s.tag,
                   background: "#1A1A1A",
                   border: "1px solid #2a2a2a",
-                color: "var(--saffron-500)",
+                  color: "var(--saffron-500)",
                 }}
               >
                 {voice.style}
@@ -255,7 +261,7 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
           </div>
         </div>
         <button
-          onClick={handleFav}
+          onClick={() => onFavToggle(voiceKey, !voice.is_favourite)}
           style={{
             background: "none",
             border: "none",
@@ -283,21 +289,16 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
         <Waveform analyserRef={analyserRef} playing={playing} />
       </div>
 
-      {/* iOS blocked banner */}
       {blocked && (
         <p style={{ fontSize: "0.78rem", color: "#F97316", margin: "0 0 8px" }}>
           Tap anywhere to enable audio
         </p>
       )}
 
-      {/* Play button */}
       <button
         onClick={handlePreview}
         disabled={loading}
-        style={{
-          ...s.playBtn,
-          background: playing ? "#16A34A" : "#F97316",
-        }}
+        style={{ ...s.playBtn, background: playing ? "#16A34A" : "#F97316" }}
       >
         {loading ? "Loading…" : playing ? "▶ Playing" : "▶ Preview"}
       </button>
@@ -307,18 +308,22 @@ function VoiceCard({ voice, previewText, speed, lang, onFavToggle }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+const FAV_KEY_SARVAM = "fav-voices";
+const FAV_KEY_GOOGLE = "fav-voices-google";
+
 export default function VoiceExplorerPage() {
+  const [provider, setProvider] = useState("sarvam"); // "sarvam" | "google"
   const [lang, setLang] = useState("ml-IN");
   const [gender, setGender] = useState("All");
-  const [style, setStyle] = useState("All");
   const [speed, setSpeed] = useState(1);
   const [previewText, setPreviewText] = useState(DEFAULT_TEXTS["ml-IN"]);
   const [favOnly, setFavOnly] = useState(false);
 
-  const [allVoices, setAllVoices] = useState(() => {
+  // ── Sarvam voices (localStorage fav) ──────────────────────────────────────
+  const [sarvamVoices, setSarvamVoices] = useState(() => {
     const saved =
       typeof window !== "undefined"
-        ? JSON.parse(localStorage.getItem("fav-voices") || "[]")
+        ? JSON.parse(localStorage.getItem(FAV_KEY_SARVAM) || "[]")
         : [];
     return BULBUL_V3_SPEAKERS.map((v) => ({
       ...v,
@@ -326,15 +331,24 @@ export default function VoiceExplorerPage() {
       is_favourite: saved.includes(v.id),
     }));
   });
-  const isLoading = false;
-  const mutate = () => {};
 
-  // Update preview text placeholder when language changes
+  // ── Google voices (localStorage fav) ──────────────────────────────────────
+  const [googleVoices, setGoogleVoices] = useState(() => {
+    const saved =
+      typeof window !== "undefined"
+        ? JSON.parse(localStorage.getItem(FAV_KEY_GOOGLE) || "[]")
+        : [];
+    return GOOGLE_VOICES.map((v) => ({
+      ...v,
+      voice_id: v.id,
+      is_favourite: saved.includes(v.id),
+    }));
+  });
+
   useEffect(() => {
     setPreviewText(DEFAULT_TEXTS[lang] ?? DEFAULT_TEXTS["en-IN"]);
   }, [lang]);
 
-  // iOS AudioContext: resume on any tap
   useEffect(() => {
     async function unlock() {
       try {
@@ -346,18 +360,32 @@ export default function VoiceExplorerPage() {
   }, []);
 
   function handleFavToggle(id, val) {
-    const updated = allVoices.map((v) =>
-      v.id === id ? { ...v, is_favourite: val } : v,
-    );
-    setAllVoices(updated);
-    const favIds = updated.filter((v) => v.is_favourite).map((v) => v.id);
-    localStorage.setItem("fav-voices", JSON.stringify(favIds));
+    if (provider === "sarvam") {
+      const updated = sarvamVoices.map((v) =>
+        v.id === id ? { ...v, is_favourite: val } : v,
+      );
+      setSarvamVoices(updated);
+      localStorage.setItem(
+        FAV_KEY_SARVAM,
+        JSON.stringify(updated.filter((v) => v.is_favourite).map((v) => v.id)),
+      );
+    } else {
+      const updated = googleVoices.map((v) =>
+        v.id === id ? { ...v, is_favourite: val } : v,
+      );
+      setGoogleVoices(updated);
+      localStorage.setItem(
+        FAV_KEY_GOOGLE,
+        JSON.stringify(updated.filter((v) => v.is_favourite).map((v) => v.id)),
+      );
+    }
   }
 
+  const allVoices = provider === "sarvam" ? sarvamVoices : googleVoices;
+
   const voices = allVoices.filter((v) => {
-    // if (gender !== "All" && v.gender !== gender) return false;
-    // if (style !== "All" && v.style !== style) return false;
-    if (gender !== "All" && v.gender.toLowerCase() !== gender.toLowerCase())
+    if (provider === "google" && v.language !== lang) return false;
+    if (gender !== "All" && v.gender?.toLowerCase() !== gender.toLowerCase())
       return false;
     if (favOnly && !v.is_favourite) return false;
     return true;
@@ -387,9 +415,42 @@ export default function VoiceExplorerPage() {
         </label>
       </div>
 
+      {/* Provider toggle */}
+      <div style={s.providerToggle}>
+        {[
+          { value: "sarvam", label: "Sarvam", sub: "Bulbul v3" },
+          { value: "google", label: "Google", sub: "Cloud TTS" },
+        ].map((p) => (
+          <button
+            key={p.value}
+            onClick={() => setProvider(p.value)}
+            style={{
+              ...s.providerBtn,
+              background:
+                provider === p.value
+                  ? "var(--saffron-500)"
+                  : "var(--surface-2)",
+              color: provider === p.value ? "#fff" : "var(--ink-500)",
+              border:
+                provider === p.value
+                  ? "1px solid var(--saffron-500)"
+                  : "1px solid var(--border)",
+            }}
+          >
+            <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>
+              {p.label}
+            </span>
+            <span
+              style={{ fontSize: "0.72rem", opacity: 0.75, marginLeft: "6px" }}
+            >
+              {p.sub}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {/* Filters */}
       <div style={s.filterBar}>
-        {/* Language */}
         <select
           value={lang}
           onChange={(e) => setLang(e.target.value)}
@@ -402,7 +463,6 @@ export default function VoiceExplorerPage() {
           ))}
         </select>
 
-        {/* Gender */}
         <select
           value={gender}
           onChange={(e) => setGender(e.target.value)}
@@ -410,17 +470,6 @@ export default function VoiceExplorerPage() {
         >
           {GENDERS.map((g) => (
             <option key={g}>{g}</option>
-          ))}
-        </select>
-
-        {/* Style */}
-        <select
-          value={style}
-          onChange={(e) => setStyle(e.target.value)}
-          style={s.select}
-        >
-          {STYLES.map((st) => (
-            <option key={st}>{st}</option>
           ))}
         </select>
       </div>
@@ -451,18 +500,8 @@ export default function VoiceExplorerPage() {
         </div>
       </div>
 
-      {/* Voice grid */}
-      {isLoading ? (
-        <div style={s.grid}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} style={{ ...s.card, gap: "12px" }}>
-              <div style={{ ...s.skeleton, height: "16px", width: "60%" }} />
-              <div style={{ ...s.skeleton, height: "40px", width: "100%" }} />
-              <div style={{ ...s.skeleton, height: "36px", width: "100%" }} />
-            </div>
-          ))}
-        </div>
-      ) : voices.length === 0 ? (
+      {/* No voices for this lang/provider */}
+      {voices.length === 0 ? (
         <p
           style={{
             color: "var(--ink-400)",
@@ -470,16 +509,17 @@ export default function VoiceExplorerPage() {
             padding: "2rem 0",
           }}
         >
-          No voices found for these filters.{" "}
-          {allVoices.length === 0 &&
-            "Run the voices sync from Settings to populate voices."}
+          No voices found for these filters.
+          {provider === "google" &&
+            " Google may not have voices for this language yet."}
         </p>
       ) : (
         <div style={s.grid}>
           {voices.map((v) => (
             <VoiceCard
-              key={v.id}
+              key={v.voice_id}
               voice={v}
+              provider={provider}
               previewText={previewText}
               speed={speed}
               lang={lang}
@@ -509,6 +549,21 @@ const s = {
     fontWeight: 400,
     color: "var(--ink-900)",
     margin: 0,
+  },
+  providerToggle: {
+    display: "flex",
+    gap: "8px",
+    marginBottom: "1rem",
+  },
+  providerBtn: {
+    display: "flex",
+    alignItems: "center",
+    borderRadius: "8px",
+    padding: "8px 18px",
+    cursor: "pointer",
+    fontFamily: "var(--font-sans)",
+    transition: "all 0.15s",
+    minHeight: "40px",
   },
   filterBar: {
     display: "flex",
@@ -548,6 +603,7 @@ const s = {
     color: "var(--ink-900)",
     outline: "none",
     minHeight: "36px",
+    background: "var(--surface)",
   },
   speedBtn: {
     border: "1px solid var(--border)",
@@ -603,10 +659,5 @@ const s = {
     fontFamily: "var(--font-sans)",
     transition: "background 0.15s",
     marginTop: "auto",
-  },
-  skeleton: {
-    background: "var(--border, #E2E4EF)",
-    borderRadius: "4px",
-    animation: "pulse 1.4s ease-in-out infinite",
   },
 };

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, use, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -214,7 +214,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
       toast.error(json?.error?.message ?? "Upload failed.");
       return;
     }
-    toast.success(`Uploaded — ${json.chunks_count} chunks indexed.`);
+    toast.success(`Uploaded - ${json.chunks_count} chunks indexed.`);
     setKbName("");
     e.target.value = "";
     mutate();
@@ -237,7 +237,7 @@ function KnowledgeBaseSection({ agentId, clientId }) {
       <h2 style={s.sectionTitle}>Knowledge Base</h2>
       <p style={s.hint}>
         Upload documents the agent can reference during calls. PDF, TXT, MD,
-        DOCX — max 10MB.
+        DOCX - max 10MB.
       </p>
       <div
         style={{
@@ -333,7 +333,6 @@ function KnowledgeBaseSection({ agentId, clientId }) {
 function WebhookSection({ agentId, agentType }) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const exotelUrl = `${origin}/api/webhooks/exotel/${agentId}`;
-  const plivoUrl = `${origin}/api/webhooks/plivo/${agentId}`;
   return (
     <div style={s.section}>
       <h2 style={s.sectionTitle}>Webhook URLs</h2>
@@ -345,11 +344,6 @@ function WebhookSection({ agentId, agentType }) {
             agentType === "inbound"
               ? "Exotel → App → Passthru App → URL"
               : "Exotel → Campaigns → Webhook URL",
-        },
-        {
-          label: "Plivo",
-          url: plivoUrl,
-          hint: "Plivo console → Phone Numbers → Answer URL",
         },
       ].map(({ label, url, hint }) => (
         <div key={label} style={{ marginBottom: "1rem" }}>
@@ -406,7 +400,6 @@ export default function AgentDetailPage({ params }) {
     prompt: "",
     greeting: "",
     exotel_number: "",
-    plivo_number: "",
     max_call_duration: 300,
     facility_type: "polyclinic",
     fallback_number: "",
@@ -424,7 +417,6 @@ export default function AgentDetailPage({ params }) {
         prompt: cfg.prompt ?? "",
         greeting: cfg.greeting ?? "",
         exotel_number: cfg.exotel_number ?? "",
-        plivo_number: cfg.plivo_number ?? "",
         max_call_duration: cfg.max_call_duration ?? 300,
         facility_type: cfg.facility_type ?? "polyclinic",
         fallback_number: cfg.fallback_number ?? "",
@@ -464,7 +456,6 @@ export default function AgentDetailPage({ params }) {
           prompt: form.prompt.trim(),
           greeting: form.greeting.trim(),
           exotel_number: form.exotel_number.trim(),
-          plivo_number: form.plivo_number.trim(),
           max_call_duration: Number(form.max_call_duration),
           facility_type: form.facility_type,
           fallback_number: form.fallback_number.trim(),
@@ -703,10 +694,10 @@ export default function AgentDetailPage({ params }) {
               style={s.select}
             >
               <option value="gemini-flash">
-                Gemini 2.5 Flash — Fast, Cheap
+                Gemini 2.5 Flash - Fast, Cheap
               </option>
               <option value="gemini-pro">
-                Gemini 2.5 Pro — Smarter, Costlier
+                Gemini 2.5 Pro - Smarter, Costlier
               </option>
             </select>
           </div>
@@ -719,15 +710,6 @@ export default function AgentDetailPage({ params }) {
                 value={form.exotel_number}
                 onChange={(e) => set("exotel_number", e.target.value)}
                 placeholder="e.g. 08088919191"
-                style={s.input}
-              />
-            </div>
-            <div style={s.field}>
-              <label style={s.label}>Plivo Number</label>
-              <input
-                value={form.plivo_number}
-                onChange={(e) => set("plivo_number", e.target.value)}
-                placeholder="e.g. +919876543210"
                 style={s.input}
               />
             </div>

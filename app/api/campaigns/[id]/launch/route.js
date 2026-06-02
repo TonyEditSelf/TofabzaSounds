@@ -1,10 +1,8 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { requireOperator } from "@/lib/auth/requireOperator";
 import { createAdminClient } from "@/lib/supabase/server";
-import { isPlivo } from "@/lib/telephony/provider";
-import { makePlivoCall } from "@/lib/plivo/client";
 
-// Exotel outbound call — v3 Calls API
+// Exotel outbound call â€” v3 Calls API
 // POST https://api.exotel.com/v1/Accounts/{sid}/Calls/connect.json
 async function makeExotelCall({ to, agentWebhookUrl }) {
   const sid = process.env.EXOTEL_ACCOUNT_SID; // tofabza1
@@ -54,7 +52,7 @@ export async function POST(req, { params }) {
   const { id } = params;
   const supabase = createAdminClient();
 
-  // ── 1. load campaign ────────────────────────────────────────────────────────
+  // â”€â”€ 1. load campaign â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: campaign, error: campErr } = await supabase
     .from("campaigns")
     .select("*, agents(id, name, config)")
@@ -79,7 +77,7 @@ export async function POST(req, { params }) {
     );
   }
 
-  // ── 2. load pending contacts ─────────────────────────────────────────────────
+  // â”€â”€ 2. load pending contacts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { data: contacts, error: contErr } = await supabase
     .from("contacts")
     .select("id, phone, name")
@@ -100,7 +98,7 @@ export async function POST(req, { params }) {
     );
   }
 
-  // ── 3. mark campaign as running ──────────────────────────────────────────────
+  // â”€â”€ 3. mark campaign as running â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { error: runErr } = await supabase
     .from("campaigns")
     .update({ status: "running" })
@@ -112,7 +110,7 @@ export async function POST(req, { params }) {
     );
   }
 
-  // ── 4. fire outbound calls (non-blocking — respond immediately) ──────────────
+  // â”€â”€ 4. fire outbound calls (non-blocking â€” respond immediately) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const nextjsUrl = process.env.NEXTJS_URL;
   if (!nextjsUrl) {
     return NextResponse.json(
@@ -121,9 +119,7 @@ export async function POST(req, { params }) {
     );
   }
 
-  const agentWebhookUrl = isPlivo()
-    ? `${nextjsUrl}/api/webhooks/plivo/${campaign.agent_id}`
-    : `${nextjsUrl}/api/webhooks/exotel/${campaign.agent_id}`;
+  const agentWebhookUrl = `${nextjsUrl}/api/webhooks/exotel/${campaign.agent_id}`;
 
   // Launch in background; don't await
   (async () => {
@@ -138,16 +134,12 @@ export async function POST(req, { params }) {
           .update({ status: "calling", called_at: new Date().toISOString() })
           .eq("id", contact.id);
 
-        const exotelRes = isPlivo()
-          ? await makePlivoCall({
-              to: contact.phone,
-              answerUrl: agentWebhookUrl,
-            })
-          : await makeExotelCall({ to: contact.phone, agentWebhookUrl });
+        const exotelRes = await makeExotelCall({
+          to: contact.phone,
+          agentWebhookUrl,
+        });
 
-        const callSid = isPlivo()
-          ? (exotelRes?.request_uuid ?? null)
-          : (exotelRes?.Call?.Sid ?? null);
+        const callSid = exotelRes?.Call?.Sid ?? null;
 
         const { error: logErr } = await supabase.from("call_logs").insert({
           call_sid: callSid,
@@ -195,7 +187,7 @@ export async function POST(req, { params }) {
       }
     }
 
-    // ── mark campaign completed ─────────────────────────────────────────────
+    // â”€â”€ mark campaign completed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const { error: completeErr } = await supabase
       .from("campaigns")
       .update({
@@ -215,7 +207,7 @@ export async function POST(req, { params }) {
       );
 
     console.log(
-      `[campaign:launch] Done — answered: ${answeredCount}, failed: ${failedCount}`,
+      `[campaign:launch] Done â€” answered: ${answeredCount}, failed: ${failedCount}`,
     );
 
     // Send completion email

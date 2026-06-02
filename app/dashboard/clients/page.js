@@ -3,7 +3,7 @@
 /**
  * app/dashboard/clients/page.js
  *
- * Table: Name, Contact, Phone, Email, Agents, Widgets, Created
+ * Table: Name, Contact, Phone, Email, Agents, Created
  * Inline add form (no modal)
  * Delete: type client name to confirm → cascade handled by DB ON DELETE CASCADE
  * Click row → /dashboard/clients/[id]
@@ -25,8 +25,7 @@ async function fetchClients() {
     .select(
       `
       id, name, contact_name, contact_phone, contact_email, created_at,
-      agents(count),
-      widgets(count)
+      agents(count)
     `,
     )
     .order("created_at", { ascending: false });
@@ -159,7 +158,7 @@ function DeleteConfirm({ client, onDone, onCancel }) {
     <div style={s.deleteBox}>
       <p style={s.deleteText}>
         Type <strong>{client.name}</strong> to confirm deletion. This will
-        delete all agents, widgets, and campaigns.
+        delete all agents and campaigns.
       </p>
       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
         <input
@@ -250,7 +249,6 @@ export default function ClientsPage() {
                 "Phone",
                 "Email",
                 "Agents",
-                "Widgets",
                 "Created",
                 "",
               ].map((h) => (
@@ -315,9 +313,6 @@ export default function ClientsPage() {
                   <td style={s.td}>{c.contact_email ?? "—"}</td>
                   <td style={{ ...s.td, textAlign: "center" }}>
                     {c.agents?.[0]?.count ?? 0}
-                  </td>
-                  <td style={{ ...s.td, textAlign: "center" }}>
-                    {c.widgets?.[0]?.count ?? 0}
                   </td>
                   <td
                     style={{

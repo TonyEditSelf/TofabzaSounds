@@ -15,28 +15,9 @@ export async function DELETE(req, { params }) {
   }
 
   const admin = createAdminClient();
-
-  // 1. Get all widget IDs for this client (needed to delete widget_tokens)
-  const { data: widgets } = await admin
-    .from("widgets")
-    .select("id")
-    .eq("client_id", clientId);
-
-  const widgetIds = (widgets ?? []).map((w) => w.id);
-
-  // 2. Delete in order — widget_tokens first (FK to widgets), then the rest
-  const ops = [];
-
-  if (widgetIds.length > 0) {
-    ops.push(admin.from("widget_tokens").delete().in("widget_id", widgetIds));
-  }
-
-  ops.push(
-    admin.from("widget_sessions").delete().eq("client_id", clientId),
+  const results = await Promise.all([
     admin.from("call_logs").delete().eq("client_id", clientId),
-  );
-
-  const results = await Promise.all(ops);
+  ]);
   const failed = results.filter((r) => r.error);
 
   if (failed.length > 0) {

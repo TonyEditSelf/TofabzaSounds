@@ -1,5 +1,5 @@
-/**
- * proxy.js — Next.js 16 middleware (replaces middleware.js)
+﻿/**
+ * proxy.js - Next.js 16 middleware (replaces middleware.js)
  *
  * Runs on the Node.js runtime (NOT Edge) so we can use full Node APIs
  * and @upstash/ratelimit with Upstash Redis.
@@ -17,25 +17,20 @@ import { NextResponse } from "next/server";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ALLOWED_EMAIL = "tonyeappen@tofabza.com";
 
 /**
  * Paths that skip the session check entirely.
- * Exotel webhooks POST here without a session — do NOT add auth there.
+ * Exotel webhooks POST here without a session - do NOT add auth there.
  */
 const PUBLIC_PATHS = [
   "/login",
   "/api/webhooks",
-  "/widget",
-  "/api/widget",
-  "/api/chat",
-  "/api/stt",
-  "/api/tts",
 ];
 
-// ─── CSP Strings ────────────────────────────────────────────────────────────
+// â”€â”€â”€ CSP Strings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Applied to all dashboard + API routes.
@@ -52,20 +47,11 @@ const DASHBOARD_CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-/**
- * Applied to widget embed API routes only.
- * No frame-ancestors restriction so widgets can run inside iframes.
- */
-const WIDGET_CSP = [
-  "default-src 'self'",
-  "connect-src 'self' *.supabase.co",
-].join("; ");
 
-// ─── Rate limiters (lazy-init so they only construct once per cold-start) ───
+// â”€â”€â”€ Rate limiters (lazy-init so they only construct once per cold-start) â”€â”€â”€
 
 let loginLimiter = null;
 let apiLimiter = null;
-let widgetLimiter = null;
 
 /**
  * Build all Upstash rate-limiters once, reuse across requests.
@@ -80,10 +66,10 @@ function getRedis() {
 }
 
 function getLimiters() {
-  if (loginLimiter) return { loginLimiter, apiLimiter, widgetLimiter };
+  if (loginLimiter) return { loginLimiter, apiLimiter };
 
   const redis = getRedis();
-  if (!redis) return {}; // no Redis → no rate-limiting (safe for local dev)
+  if (!redis) return {}; // no Redis -> no rate-limiting (safe for local dev)
 
   loginLimiter = new Ratelimit({
     redis,
@@ -92,7 +78,7 @@ function getLimiters() {
     analytics: false,
   });
 
-  // 1000 req/min — generous for a single-user app
+  // 1000 req/min - generous for a single-user app
   apiLimiter = new Ratelimit({
     redis,
     limiter: Ratelimit.slidingWindow(1000, "1 m"),
@@ -100,18 +86,10 @@ function getLimiters() {
     analytics: false,
   });
 
-  // Widget token endpoint: 20 req/min per IP
-  widgetLimiter = new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(20, "1 m"),
-    prefix: "rl:widget",
-    analytics: false,
-  });
-
-  return { loginLimiter, apiLimiter, widgetLimiter };
+  return { loginLimiter, apiLimiter };
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Extract the real client IP, respecting Vercel's forwarding headers.
@@ -153,19 +131,15 @@ function rateLimitExceeded(retryAfter = "60") {
 
 /**
  * Attach security headers to a response without mutating the original.
- * Always called before returning — even on redirects.
+ * Always called before returning - even on redirects.
  *
  * @param {NextResponse} res
- * @param {boolean}      isWidget - use Widget CSP instead of Dashboard CSP
  * @returns {NextResponse}
  */
-function attachSecurityHeaders(res, isWidget = false) {
-  res.headers.set(
-    "Content-Security-Policy",
-    isWidget ? WIDGET_CSP : DASHBOARD_CSP,
-  );
+function attachSecurityHeaders(res) {
+  res.headers.set("Content-Security-Policy", DASHBOARD_CSP);
   res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("X-Frame-Options", isWidget ? "SAMEORIGIN" : "DENY");
+  res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set(
     "Permissions-Policy",
@@ -174,11 +148,11 @@ function attachSecurityHeaders(res, isWidget = false) {
   return res;
 }
 
-// ─── Main middleware export ──────────────────────────────────────────────────
+// â”€â”€â”€ Main middleware export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Next.js 16 middleware entry point.
- * Named `proxy` — this IS the default export for the middleware file.
+ * Named `proxy` - this IS the default export for the middleware file.
  *
  * @param {import('next/server').NextRequest} req
  * @returns {Promise<NextResponse>}
@@ -186,9 +160,8 @@ function attachSecurityHeaders(res, isWidget = false) {
 export async function proxy(req) {
   const { pathname } = req.nextUrl;
   const ip = getClientIp(req);
-  const isWidget = pathname.startsWith("/api/widget");
 
-  // ── 1. Static assets & Next.js internals — skip everything ──────────────
+  // 1. Static assets and Next.js internals
   //    (These are already excluded by the matcher below, but as a safety net:)
   if (
     pathname.startsWith("/_next/") ||
@@ -198,8 +171,8 @@ export async function proxy(req) {
     return NextResponse.next();
   }
 
-  // ── 2. Rate-limit login attempts ─────────────────────────────────────────
-  const { loginLimiter: ll, apiLimiter: al, widgetLimiter: wl } = getLimiters();
+  // 2. Rate-limit login attempts
+  const { loginLimiter: ll, apiLimiter: al } = getLimiters();
 
   if (ll && pathname.startsWith("/login") && req.method === "POST") {
     const { success, reset } = await ll.limit(ip);
@@ -209,21 +182,8 @@ export async function proxy(req) {
     }
   }
 
-  // ── 3. Rate-limit widget token endpoint ──────────────────────────────────
-  if (wl && pathname.startsWith("/api/widget/token")) {
-    const { success, reset } = await wl.limit(ip);
-    if (!success) {
-      const retryAfter = Math.ceil((reset - Date.now()) / 1000).toString();
-      return rateLimitExceeded(retryAfter);
-    }
-  }
-
-  // ── 4. Rate-limit all other API routes ───────────────────────────────────
-  if (
-    al &&
-    pathname.startsWith("/api/") &&
-    !pathname.startsWith("/api/widget/token")
-  ) {
+  // Rate-limit API routes
+  if (al && pathname.startsWith("/api/")) {
     const { success, reset } = await al.limit(ip);
     if (!success) {
       const retryAfter = Math.ceil((reset - Date.now()) / 1000).toString();
@@ -231,14 +191,14 @@ export async function proxy(req) {
     }
   }
 
-  // ── 5. Public paths — skip session check, just attach headers ────────────
+  // 5. Public paths: skip session check, just attach headers
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
   if (isPublic) {
     const res = NextResponse.next();
-    return attachSecurityHeaders(res, isWidget);
+    return attachSecurityHeaders(res);
   }
 
-  // ── 6. Session check via Supabase ────────────────────────────────────────
+  // 6. Session check via Supabase
   const res = NextResponse.next();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -263,39 +223,38 @@ export async function proxy(req) {
     // If Supabase is unreachable, fail safe: redirect to login
     console.error("[proxy] Supabase session check failed:", err?.message);
     const loginUrl = new URL("/login?error=service_unavailable", req.url);
-    return attachSecurityHeaders(NextResponse.redirect(loginUrl), isWidget);
+    return attachSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  // No session → redirect to login
+  // No session -> redirect to login
   if (!session) {
     const loginUrl = new URL("/login", req.url);
     // Preserve the original destination so we can redirect back after login
     loginUrl.searchParams.set("next", pathname);
-    return attachSecurityHeaders(NextResponse.redirect(loginUrl), isWidget);
+    return attachSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  // ── 7. Single-user email lock ─────────────────────────────────────────────
+  // 7. Single-user email lock
   if (session.user.email !== ALLOWED_EMAIL) {
     // Sign out any intruder immediately, then redirect
     try {
       await supabase.auth.signOut();
     } catch (_) {
-      // Best-effort — the redirect is what matters
+      // Best-effort - the redirect is what matters
     }
     const loginUrl = new URL("/login?error=unauthorised", req.url);
-    return attachSecurityHeaders(NextResponse.redirect(loginUrl), isWidget);
+    return attachSecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  // ── 8. All checks passed — attach headers and continue ───────────────────
-  return attachSecurityHeaders(res, isWidget);
+  // 8. All checks passed: attach headers and continue
+  return attachSecurityHeaders(res);
 }
 
-// ─── Matcher ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Matcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Excludes:
-//   • _next/static  — compiled JS/CSS bundles
-//   • _next/image   — Next.js image optimisation service
-//   • favicon.ico   — browser auto-request
-//   • /widget/*     — the embed script itself (public, no auth needed)
+//   - _next/static: compiled JS/CSS bundles
+//   - _next/image: Next.js image optimisation service
+//   - favicon.ico: browser auto-request
 //
 // Everything else (pages, API routes, fonts, etc.) goes through proxy().
