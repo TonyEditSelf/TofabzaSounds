@@ -12,7 +12,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { stt, tts } from "../../../lib/voice/provider.js";
+import { stt, tts } from "../../lib/voice/provider.js";
 import { getLLMReply } from "../pipeline/llm.js";
 import { stripWavHeader, chunkPcm } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";

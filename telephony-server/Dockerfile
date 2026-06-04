@@ -1,7 +1,9 @@
 FROM node:20-slim
 WORKDIR /app
-COPY package.json .
+COPY telephony-server/package.json .
 RUN npm install --production
-COPY src/ ./src/
+COPY telephony-server/src/ ./src/
+COPY lib/ ./lib/
+
 EXPOSE 8080
 CMD ["node", "src/index.js"]
