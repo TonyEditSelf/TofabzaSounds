@@ -10,6 +10,7 @@ import "dotenv/config";
 import http from "http";
 import { WebSocketServer } from "ws";
 import { handleCall } from "./websocket/callHandler.js";
+import { handleCall as handleCallTwilio } from "./websocket/callHandlerTwilio.js";
 
 const PORT = process.env.PORT || 8080;
 
@@ -39,10 +40,12 @@ const wss = new WebSocketServer({ server });
 wss.on("connection", (ws, req) => {
   // Basic auth validation (optional if using Basic Auth in WSS URL)
   const authHeader = req.headers["authorization"];
+  const url2 = new URL(req.url, "wss://localhost");
+  const isExotel = (url2.searchParams.get("provider") ?? "exotel") === "exotel";
   const exotelConfigured =
     process.env.EXOTEL_API_KEY && process.env.EXOTEL_API_TOKEN;
 
-  if (exotelConfigured) {
+  if (isExotel && exotelConfigured) {
     if (!authHeader) {
       console.warn("[ws] Rejected - missing Authorization header");
       ws.close(1008, "Unauthorised");
@@ -55,7 +58,14 @@ wss.on("connection", (ws, req) => {
       return;
     }
   }
-  handleCall(ws, req);
+  const url = new URL(req.url, "wss://localhost");
+  const provider = url.searchParams.get("provider") ?? "exotel";
+
+  if (provider === "twilio") {
+    handleCallTwilio(ws, req);
+  } else {
+    handleCall(ws, req);
+  }
 });
 
 wss.on("error", (err) => {
