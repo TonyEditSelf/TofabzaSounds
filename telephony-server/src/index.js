@@ -89,7 +89,3 @@ process.on("uncaughtException", (err) => {
   console.error("[server] Uncaught exception:", err);
   // Don't crash - log and continue
 });
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
