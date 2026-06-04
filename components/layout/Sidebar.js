@@ -22,6 +22,7 @@ const NAV = [
   { href: "/dashboard/form-builder", label: "Form Builder", icon: "🧩" },
   { href: "/dashboard/analytics", label: "Analytics", icon: "◈" },
   { href: "/dashboard/costs", label: "Costs", icon: "₹" },
+  { href: "/dashboard/logs", label: "Debug Logs", icon: "🪵" },
   null,
   { href: "/dashboard/api-keys", label: "API Keys", icon: "⚿" },
   { href: "/dashboard/settings", label: "Settings", icon: "◌" },

@@ -29,20 +29,30 @@ const STATUS_MAP = {
   "in-progress": "in_progress",
 };
 
+import telephony from "@/lib/telephony/index";
+import logger from "@/lib/logger";
+
 export async function POST(req) {
   try {
-    // Verify shared secret from URL query param
-    // StatusCallback URL must be set as:
-    // /api/webhooks/exotel/status?secret=YOUR_INTERNAL_API_SECRET
-    // Verify via header instead of URL query param (secrets don't belong in URLs)
-    // Exotel doesn't send custom headers — verify CallSid exists in DB instead (done below)
+    const clonedReq = req.clone();
 
-    // Replay protection — reject if same CallSid already finalized
+    // Parse normalized status via provider abstraction
+    let normalized = null;
+    try {
+      normalized = await telephony.parseStatusCallback(clonedReq);
+      logger.statusCallback({
+        callSid: normalized.callSid,
+        payload: normalized.raw,
+        provider: normalized.provider,
+      });
+    } catch (err) {
+      logger.statusCallbackError({ error: err });
+    }
 
-    // Parse form-encoded body
+    // Fall back to direct parse for existing logic below
     const text = await req.text();
     const params = Object.fromEntries(new URLSearchParams(text));
-    const callSid = params.CallSid || params.call_sid;
+    const callSid = normalized?.callSid || params.CallSid || params.call_sid;
     const rawStatus = (params.Status || params.status || "").toLowerCase();
     const duration = parseInt(params.Duration || params.duration || "0", 10);
 

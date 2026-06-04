@@ -4,39 +4,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 // Exotel outbound call â€” v3 Calls API
 // POST https://api.exotel.com/v1/Accounts/{sid}/Calls/connect.json
-async function makeExotelCall({ to, agentWebhookUrl }) {
-  const sid = process.env.EXOTEL_ACCOUNT_SID; // tofabza1
-  const key = process.env.EXOTEL_API_KEY;
-  const token = process.env.EXOTEL_API_TOKEN;
-  const exophone = process.env.EXOTEL_EXOPHONE ?? "04954266427";
-  const subdomain = process.env.EXOTEL_SUBDOMAIN ?? "api.exotel.com";
 
-  const url = `https://${key}:${token}@${subdomain}/v1/Accounts/${sid}/Calls/connect.json`;
-
-  const body = new URLSearchParams({
-    From: exophone,
-    To: to,
-    CallerId: exophone,
-    // Url points to the TwiML-style callback on your Next.js app
-    // Exotel will POST to this URL when the called party answers
-    Url: agentWebhookUrl,
-    Record: "false",
-    StatusCallback: `${process.env.NEXTJS_URL}/api/webhooks/exotel/status`,
-    StatusCallbackEvents: "terminal",
-  });
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Exotel error ${res.status}: ${text}`);
-  }
-  return res.json();
-}
+import telephony from "@/lib/telephony/index";
+import logger from "@/lib/logger";
 
 export async function POST(req, { params }) {
   // Allow cron/internal calls via x-internal-secret header
@@ -134,12 +104,27 @@ export async function POST(req, { params }) {
           .update({ status: "calling", called_at: new Date().toISOString() })
           .eq("id", contact.id);
 
-        const exotelRes = await makeExotelCall({
-          to: contact.phone,
-          agentWebhookUrl,
-        });
+        const statusCallbackUrl = `${process.env.NEXTJS_URL}/api/webhooks/${process.env.TELEPHONY_PROVIDER || "exotel"}/status`;
 
-        const callSid = exotelRes?.Call?.Sid ?? null;
+        const result = await telephony.initiateCall(
+          contact.phone,
+          null,
+          campaign.agent_id,
+          statusCallbackUrl,
+        );
+
+        const callSid = result.callSid ?? null;
+
+        logger.outboundCallInitiated({
+          callSid,
+          provider: result.provider,
+          agentId: campaign.agent_id,
+          payload: {
+            contact_id: contact.id,
+            phone: contact.phone,
+            campaign_id: id,
+          },
+        });
 
         const { error: logErr } = await supabase.from("call_logs").insert({
           call_sid: callSid,
@@ -157,7 +142,6 @@ export async function POST(req, { params }) {
             logErr.message,
           );
 
-        // Store call_sid so the status webhook can match exactly
         const { error: callingErr } = await supabase
           .from("contacts")
           .update({ status: "calling", call_sid: callSid })
@@ -177,6 +161,13 @@ export async function POST(req, { params }) {
           `[campaign:launch] Failed to call ${contact.phone}:`,
           err.message,
         );
+
+        logger.outboundCallFailed({
+          provider: process.env.TELEPHONY_PROVIDER || "exotel",
+          agentId: campaign.agent_id,
+          payload: { contact_id: contact.id, phone: contact.phone },
+          error: err,
+        });
 
         await supabase
           .from("contacts")

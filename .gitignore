@@ -20,6 +20,9 @@
 # production
 /build
 
+# Google credentials
+credentials/
+
 # misc
 .DS_Store
 *.pem

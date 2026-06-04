@@ -12,6 +12,8 @@
     "@fontsource/dm-sans": "^5.2.8",
     "@fontsource/dm-serif-display": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "@google-cloud/speech": "^7.3.1",
+    "@google-cloud/text-to-speech": "^6.4.1",
     "@google/generative-ai": "^0.24.1",
     "@sentry/nextjs": "^10.53.1",
     "@supabase/auth-helpers-nextjs": "^0.15.0",

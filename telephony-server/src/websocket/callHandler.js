@@ -12,9 +12,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { transcribeAudio } from "../pipeline/stt.js";
+import { stt, tts } from "../../../lib/voice/provider.js";
 import { getLLMReply } from "../pipeline/llm.js";
-import { synthesizeSpeech } from "../pipeline/tts.js";
 import { stripWavHeader, chunkPcm } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
 
@@ -141,10 +140,11 @@ export function handleCall(ws, req) {
       );
 
       // 1. STT
-      const transcript = await transcribeAudio(
-        pcmBuffer,
-        agent.language ?? lang,
-      );
+      const transcript = await stt({
+        audioBuffer: pcmBuffer,
+        languageCode: agent.language ?? lang,
+        mimeType: "audio/wav",
+      });
       clearTimeout(chimeTimer);
 
       if (!transcript?.trim()) {
@@ -173,10 +173,10 @@ export function handleCall(ws, req) {
       history.push({ role: "assistant", content: reply });
 
       // 3. TTS
-      const wav = await synthesizeSpeech({
+      const wav = await tts({
         text: reply,
-        language: agent.language ?? lang,
-        speaker: agent.config?.voice_id ?? "anand",
+        languageCode: agent.language ?? lang,
+        voiceId: agent.config?.voice_id ?? "anand",
         pace: agent.config?.pace ?? 1.0,
       });
 
@@ -187,10 +187,10 @@ export function handleCall(ws, req) {
       try {
         const msg =
           agent?.config?.fallback_message ?? "I am sorry, please try again.";
-        const wav = await synthesizeSpeech({
+        const wav = await tts({
           text: msg,
-          language: agent?.language ?? lang,
-          speaker: "anand",
+          languageCode: agent?.language ?? lang,
+          voiceId: "anand",
         });
         sendAudio(stripWavHeader(wav));
       } catch (_) {}
@@ -208,10 +208,10 @@ export function handleCall(ws, req) {
     const greeting = agent?.config?.greeting;
     if (!greeting) return;
     try {
-      const wav = await synthesizeSpeech({
+      const wav = await tts({
         text: greeting,
-        language: agent.language ?? lang,
-        speaker: agent.config?.voice_id ?? "anand",
+        languageCode: agent.language ?? lang,
+        voiceId: agent.config?.voice_id ?? "anand",
       });
       sendAudio(stripWavHeader(wav));
     } catch (err) {

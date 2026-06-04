@@ -104,6 +104,22 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      <Section
+        title="Voice Provider"
+        subtitle="Select active TTS/STT engine"
+        icon="🗣️"
+      >
+        <SelectField
+          label="Voice provider"
+          value={form.voice_provider ?? "sarvam"}
+          onChange={(v) => set("voice_provider", v)}
+          options={[
+            { value: "sarvam", label: "Sarvam (default)" },
+            { value: "google", label: "Google Cloud" },
+          ]}
+        />
+      </Section>
+
       <Section title="Sarvam" subtitle="Voice & STT" icon="🎙️">
         <SecretField
           label="API key"
@@ -127,6 +143,49 @@ export default function SettingsPage() {
           value={form.sarvam_default_voice ?? ""}
           onChange={(v) => set("sarvam_default_voice", v)}
           placeholder="meera"
+        />
+      </Section>
+
+      <Section title="Google TTS/STT" subtitle="Cloud voices & STT" icon="🔊">
+        <SecretField
+          label="TTS API key"
+          value={form.google_tts_api_key ?? ""}
+          revealed={revealed.google_tts_api_key}
+          onToggle={() => toggleReveal("google_tts_api_key")}
+          onChange={(v) => set("google_tts_api_key", v)}
+          placeholder="AIza…"
+        />
+        <SecretField
+          label="STT API key"
+          value={form.google_stt_api_key ?? ""}
+          revealed={revealed.google_stt_api_key}
+          onToggle={() => toggleReveal("google_stt_api_key")}
+          onChange={(v) => set("google_stt_api_key", v)}
+          placeholder="AIza…"
+        />
+        <SelectField
+          label="Default language"
+          value={form.google_default_language ?? "en-IN"}
+          onChange={(v) => set("google_default_language", v)}
+          options={LANGUAGES.map((l) => ({
+            value: l.code,
+            label: `${l.code} — ${l.label}`,
+          }))}
+        />
+        <TextField
+          label="Default voice"
+          value={form.google_default_voice ?? ""}
+          onChange={(v) => set("google_default_voice", v)}
+          placeholder="en-IN-Wavenet-A"
+        />
+        <SelectField
+          label="TTS model"
+          value={form.google_tts_model ?? "wavenet"}
+          onChange={(v) => set("google_tts_model", v)}
+          options={[
+            { value: "wavenet", label: "WaveNet" },
+            { value: "neural2", label: "Neural2" },
+          ]}
         />
       </Section>
 

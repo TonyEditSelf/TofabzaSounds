@@ -359,6 +359,18 @@ export default function VoiceExplorerPage() {
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
+  // Initialize provider from server VOICE_PROVIDER
+  useEffect(() => {
+    async function loadProvider() {
+      try {
+        const res = await fetch("/api/settings");
+        const s = await res.json();
+        setProvider(s.voice_provider ?? "sarvam");
+      } catch (_) {}
+    }
+    loadProvider();
+  }, []);
+
   function handleFavToggle(id, val) {
     if (provider === "sarvam") {
       const updated = sarvamVoices.map((v) =>

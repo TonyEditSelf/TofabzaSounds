@@ -17,6 +17,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 const RAILWAY_WS_URL = process.env.RAILWAY_WS_URL; // e.g. wss://tofabza-telephony.up.railway.app
 
+import telephony from "@/lib/telephony/index";
+import logger from "@/lib/logger";
+
 export async function POST(req, { params }) {
   const { agent_id } = await params;
 
@@ -44,17 +47,29 @@ export async function POST(req, { params }) {
     );
   }
 
-  // Build WebSocket URL with agent context
-  const wsUrl = `${RAILWAY_WS_URL}/ws/call?agent_id=${agent_id}&lang=${agent.language ?? "ml-IN"}`;
+  let rawBody = {};
+  try {
+    const text = await req.text();
+    rawBody = Object.fromEntries(new URLSearchParams(text));
+  } catch (_) {}
 
-  // Log the inbound call attempt
+  const callSid = rawBody.CallSid || rawBody.call_sid || "";
+
+  logger.inboundWebhook({
+    callSid,
+    payload: rawBody,
+    provider: process.env.TELEPHONY_PROVIDER || "exotel",
+    agentId: agent_id,
+  });
+
+  const wsConfig = telephony.getWebSocketConfig(agent_id);
+
   console.log(
-    `[exotel webhook] Inbound call → agent: ${agent_id} → ws: ${wsUrl}`,
+    `[exotel webhook] Inbound call → agent: ${agent_id} → ws: ${wsConfig.url}`,
   );
 
-  // Return Exotel Voicebot Applet response
   return Response.json({
-    url: wsUrl,
+    url: wsConfig.url,
     bidirectional: true,
     sample_rate: 16000,
     encoding: "pcm_s16le",
