@@ -62,7 +62,7 @@ export async function POST(req, { params }) {
 
   // Convert wss:// Railway URL for the Stream target
   // Twilio connects via wss; agent_id passed as stream parameter
-  const streamUrl = `wss://tofabzasounds-production.up.railway.app/ws/twilio`;
+  const streamUrl = `${RAILWAY_WS_URL}/ws/twilio`;
 
   // TwiML: connect call to Media Stream
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -86,4 +86,3 @@ export async function GET() {
     headers: { "Content-Type": "text/xml" },
   });
 }
- 
