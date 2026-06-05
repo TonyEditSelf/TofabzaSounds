@@ -63,7 +63,7 @@ export async function POST(req, { params }) {
   // Convert wss:// Railway URL for the Stream target
   // Twilio connects via wss; agent_id passed as stream parameter
   console.log("RAILWAY_WS_URL raw:", RAILWAY_WS_URL);
-  const streamUrl = `wss://tofabzasounds-production.up.railway.app/ws/call?agent_id=${agent_id}&amp;provider=twilio`;
+  const streamUrl = `wss://tofabzasounds-production.up.railway.app/ws/call?agent_id=${agent_id}&provider=twilio`;
   console.log("streamUrl:", streamUrl);
 
   console.log(
@@ -74,7 +74,7 @@ export async function POST(req, { params }) {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}">
+  <Stream url="${streamUrl.replace(/&/g, "&amp;")}">
       <Parameter name="agent_id" value="${agent_id}" />
       <Parameter name="call_sid" value="${callSid}" />
     </Stream>
