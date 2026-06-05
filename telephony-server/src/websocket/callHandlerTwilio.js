@@ -322,9 +322,9 @@ export function handleCall(ws, req) {
         break;
 
       case "start":
-        // Twilio uses camelCase streamSid
         streamSid = msg.streamSid ?? msg.start?.streamSid;
         callSid = msg.start?.callSid;
+        agentId = agentId ?? msg.start?.customParameters?.agent_id;
         callStart = Date.now();
         console.log(`[twilio] start callSid=${callSid}`);
 

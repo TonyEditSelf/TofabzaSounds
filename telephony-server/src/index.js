@@ -38,6 +38,10 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
+  if (req.url === "/ws/twilio" || req.url.startsWith("/ws/twilio?")) {
+    handleCallTwilio(ws, req);
+    return;
+  }
   // Basic auth validation (optional if using Basic Auth in WSS URL)
   const authHeader = req.headers["authorization"];
   const url2 = new URL(req.url, "wss://localhost");
