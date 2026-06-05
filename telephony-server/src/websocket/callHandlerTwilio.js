@@ -21,7 +21,7 @@ import { getLLMReply } from "../pipeline/llm.js";
 import { stripWavHeader, upsample8kTo16k } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
 
-const VAD_SILENCE_THRESHOLD = 300;
+const VAD_SILENCE_THRESHOLD = 50;
 const VAD_SILENCE_DURATION = 1500;
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
