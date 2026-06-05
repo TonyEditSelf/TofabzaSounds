@@ -89,8 +89,9 @@ function encodeMulaw(pcmBuf) {
  * Downsample PCM s16le from 16kHz to 8kHz (drop every other sample)
  */
 function downsample16kTo8k(pcm16k) {
-  const out = Buffer.alloc(pcm16k.length / 2);
-  for (let i = 0; i < out.length / 2; i++) {
+  const samples = Math.floor(pcm16k.length / 4);
+  const out = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) {
     out.writeInt16LE(pcm16k.readInt16LE(i * 4), i * 2);
   }
   return out;
