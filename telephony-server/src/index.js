@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 
-// â”€â”€ WebSocket server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ WebSocket server
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -45,45 +45,42 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", (ws, req) => {
-  if (req.url === "/ws/twilio" || req.url.startsWith("/ws/twilio?")) {
-    handleCallTwilio(ws, req);
-    return;
-  }
-  // Basic auth validation (optional if using Basic Auth in WSS URL)
-  const authHeader = req.headers["authorization"];
-  const url2 = new URL(req.url, "wss://localhost");
-  const isExotel = (url2.searchParams.get("provider") ?? "exotel") === "exotel";
-  const exotelConfigured =
-    process.env.EXOTEL_API_KEY && process.env.EXOTEL_API_TOKEN;
+  const url = req.url || "";
+  console.log("[ws] incoming:", url);
 
-  if (isExotel && exotelConfigured) {
-    if (!authHeader) {
-      console.warn("[ws] Rejected - missing Authorization header");
-      ws.close(1008, "Unauthorised");
-      return;
-    }
-    const expected = `Basic ${Buffer.from(`${process.env.EXOTEL_API_KEY}:${process.env.EXOTEL_API_TOKEN}`).toString("base64")}`;
-    if (authHeader !== expected) {
-      console.warn("[ws] Rejected - invalid Authorization header");
-      ws.close(1008, "Unauthorised");
-      return;
-    }
+  if (url.startsWith("/ws/twilio")) {
+    console.log("[ws] route → TWILIO");
+    return handleCallTwilio(ws, req);
   }
-  const url = new URL(req.url, "wss://localhost");
-  const provider = url.searchParams.get("provider") ?? "exotel";
 
-  if (provider === "twilio") {
-    handleCallTwilio(ws, req);
-  } else {
-    handleCall(ws, req);
+  if (url.startsWith("/ws/call")) {
+    console.log("[ws] route → EXOTEL");
+    const authHeader = req.headers["authorization"];
+    const exotelConfigured =
+      process.env.EXOTEL_API_KEY && process.env.EXOTEL_API_TOKEN;
+    if (exotelConfigured) {
+      if (!authHeader) {
+        ws.close(1008, "Unauthorised");
+        return;
+      }
+      const expected = `Basic ${Buffer.from(`${process.env.EXOTEL_API_KEY}:${process.env.EXOTEL_API_TOKEN}`).toString("base64")}`;
+      if (authHeader !== expected) {
+        ws.close(1008, "Unauthorised");
+        return;
+      }
+    }
+    return handleCall(ws, req);
   }
+
+  console.log("[ws] unknown route, closing");
+  ws.close();
 });
 
 wss.on("error", (err) => {
   console.error("[wss] Error:", err.message);
 });
 
-// â”€â”€ Start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Start
 
 server.listen(PORT, () => {
   console.log(`[server] Tofabza telephony server running on port ${PORT}`);
