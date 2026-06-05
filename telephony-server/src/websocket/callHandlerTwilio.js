@@ -325,6 +325,10 @@ export function handleCall(ws, req) {
       case "start":
         streamSid = msg.streamSid ?? msg.start?.streamSid;
         callSid = msg.start?.callSid;
+        console.log(
+          "[twilio] customParameters:",
+          JSON.stringify(msg.start?.customParameters),
+        );
         agentId = agentId ?? msg.start?.customParameters?.agent_id;
         callStart = Date.now();
         console.log(`[twilio] start callSid=${callSid}`);
