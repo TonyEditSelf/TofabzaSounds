@@ -9,6 +9,10 @@ import {
   BULBUL_V3_SPEAKERS,
   TTS_SUPPORTED_LANGUAGES,
 } from "@/lib/sarvam/voices";
+import { GOOGLE_VOICES } from "@/lib/google/voices";
+
+const VOICE_PROVIDER = process.env.NEXT_PUBLIC_VOICE_PROVIDER ?? "sarvam";
+const VOICES = VOICE_PROVIDER === "google" ? GOOGLE_VOICES : BULBUL_V3_SPEAKERS;
 
 const supabase = createClient();
 
@@ -395,7 +399,7 @@ export default function AgentDetailPage({ params }) {
     client_id: "",
     name: "",
     language: "ml-IN",
-    voice_id: "anand",
+    voice_id: VOICE_PROVIDER === "google" ? "ml-IN-Wavenet-A" : "anand",
     llm_provider: "gemini-flash",
     prompt: "",
     greeting: "",
@@ -412,7 +416,9 @@ export default function AgentDetailPage({ params }) {
         client_id: agent.client_id ?? "",
         name: agent.name ?? "",
         language: agent.language ?? "ml-IN",
-        voice_id: cfg.voice_id ?? "anand",
+        voice_id:
+          cfg.voice_id ??
+          (VOICE_PROVIDER === "google" ? "ml-IN-Wavenet-A" : "anand"),
         llm_provider: cfg.llm_provider ?? "gemini-flash",
         prompt: cfg.prompt ?? "",
         greeting: cfg.greeting ?? "",
@@ -678,7 +684,7 @@ export default function AgentDetailPage({ params }) {
                 onChange={(e) => set("voice_id", e.target.value)}
                 style={s.select}
               >
-                {BULBUL_V3_SPEAKERS.map((v) => (
+                {VOICES.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.gender})
                   </option>
