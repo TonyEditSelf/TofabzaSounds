@@ -412,8 +412,7 @@ export function handleCall(ws, req) {
         break;
 
       case "mark":
-        // Twilio mark name is nested differently
-        if (msg.mark?.name?.startsWith("bot-")) isBotSpeaking = false;
+        // Don't reset isBotSpeaking on mark — using time-based approach instead
         break;
 
       case "stop":
