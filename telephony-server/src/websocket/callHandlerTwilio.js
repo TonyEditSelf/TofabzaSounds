@@ -385,8 +385,9 @@ export function handleCall(ws, req) {
         );
         isBotSpeaking = true;
         await playGreeting();
-        // Wait for greeting to finish before accepting user audio
+        // Clear any chunks accumulated during greeting
         setTimeout(() => {
+          pcmChunks = [];
           isBotSpeaking = false;
         }, 5000);
         break;

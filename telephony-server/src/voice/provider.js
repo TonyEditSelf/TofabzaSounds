@@ -197,7 +197,7 @@ async function googleSTT({ audioBuffer, languageCode = "ml-IN" }) {
       encoding: "LINEAR16",
       sampleRateHertz: 16000,
       languageCode,
-      model: "phone_call",
+      model: "latest_long",
     },
   };
   const res = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
