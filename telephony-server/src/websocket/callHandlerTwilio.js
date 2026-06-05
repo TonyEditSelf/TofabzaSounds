@@ -111,6 +111,7 @@ function chunkBuffer(buf, chunkSize = 160) {
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 export function handleCall(ws, req) {
+  console.log("[twilio] handler hit");
   const url = new URL(req.url, "wss://localhost");
   const agentId = url.searchParams.get("agent_id");
   const lang = url.searchParams.get("lang") ?? "ml-IN";
