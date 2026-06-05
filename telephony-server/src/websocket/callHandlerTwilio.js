@@ -232,12 +232,21 @@ export function handleCall(ws, req) {
       );
 
       // 1. STT — send 16kHz PCM
+      console.log(
+        "[twilio/pipeline] calling STT, buffer size:",
+        pcm16kBuffer.length,
+      );
+      console.log(
+        "[twilio/pipeline] calling STT, buffer size:",
+        pcm16kBuffer.length,
+      );
       const transcript = await stt({
         audioBuffer: pcm16kBuffer,
         languageCode: agent.language ?? lang,
         mimeType: "audio/wav",
       });
       clearTimeout(chimeTimer);
+      console.log("[twilio/pipeline] STT done:", transcript);
 
       if (!transcript?.trim()) {
         isProcessing = false;
@@ -260,6 +269,7 @@ export function handleCall(ws, req) {
         return;
       }
       console.log(`[twilio/llm] "${reply.slice(0, 80)}"`);
+      console.log("[twilio/pipeline] LLM done, calling TTS");
 
       history = history.slice(-40);
       history.push({ role: "assistant", content: reply });
@@ -272,10 +282,11 @@ export function handleCall(ws, req) {
         pace: agent.config?.pace ?? 1.0,
       });
 
+      console.log("[twilio/pipeline] TTS done, sending audio");
       sendAudio(stripWavHeader(wav));
       console.log(`[twilio/pipeline] ${Date.now() - t0}ms`);
     } catch (err) {
-      console.error("[twilio/pipeline]", err?.message);
+      console.error("[twilio/pipeline] ERROR:", err?.message, err?.stack);
       try {
         const msg =
           agent?.config?.fallback_message ?? "I am sorry, please try again.";
@@ -307,7 +318,7 @@ export function handleCall(ws, req) {
       });
       sendAudio(stripWavHeader(wav));
     } catch (err) {
-      console.error("[twilio/greeting]", err?.message);
+      console.error("[twilio/pipeline] ERROR:", err?.message, err?.stack);
     }
   }
 
