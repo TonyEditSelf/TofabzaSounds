@@ -319,7 +319,7 @@ export function handleCall(ws, req) {
 
     switch (msg.event) {
       case "connected":
-        await loadAgent();
+        // agent loaded after start event when agentId is available
         break;
 
       case "start":
@@ -331,6 +331,7 @@ export function handleCall(ws, req) {
         );
         agentId = agentId ?? msg.start?.customParameters?.agent_id;
         callStart = Date.now();
+        await loadAgent();
         console.log(`[twilio] start callSid=${callSid}`);
 
         callLogId = await createCallLog(supabase, {
