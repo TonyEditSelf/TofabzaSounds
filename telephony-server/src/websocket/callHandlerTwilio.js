@@ -21,7 +21,6 @@ import { getLLMReply } from "../pipeline/llm.js";
 import { stripWavHeader, upsample8kTo16k } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
 
-const VAD_SILENCE_THRESHOLD = 50;
 const VAD_SILENCE_DURATION = 1500;
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
@@ -193,15 +192,6 @@ export function handleCall(ws, req) {
 
   // ── VAD ─────────────────────────────────────────────────────────────────────
 
-  function getRMS(pcm) {
-    let sum = 0;
-    for (let i = 0; i < pcm.length - 1; i += 2) {
-      const s = pcm.readInt16LE(i);
-      sum += s * s;
-    }
-    return Math.sqrt(sum / (pcm.length / 2));
-  }
-
   function resetVadTimer() {
     if (vadTimer) clearTimeout(vadTimer);
     vadTimer = setTimeout(async () => {
@@ -359,16 +349,7 @@ export function handleCall(ws, req) {
         const pcm8k = decodeMulaw(mulawBuf);
         const pcm16k = upsample8kTo16k(pcm8k);
 
-        const rms = getRMS(pcm16k);
-
-        if (rms > VAD_SILENCE_THRESHOLD) {
-          if (!isSpeaking) {
-            isSpeaking = true;
-            if (isBotSpeaking) sendClear();
-          }
-          pcmChunks.push(pcm16k);
-          resetVadTimer();
-        } else if (isSpeaking) {
+        if (!isBotSpeaking) {
           pcmChunks.push(pcm16k);
           resetVadTimer();
         }
