@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-  <Stream url="wss://tofabzasounds-production.up.railway.app/ws/twilio">
-      <Parameter name="agent_id" value="779e5052-7072-419e-8bae-d8a7686e8b84" />
-      <Parameter name="call_sid" value="" />
-    </Stream>
-  </Connect>
-</Response>
