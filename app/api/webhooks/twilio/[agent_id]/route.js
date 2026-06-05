@@ -62,7 +62,9 @@ export async function POST(req, { params }) {
 
   // Convert wss:// Railway URL for the Stream target
   // Twilio connects via wss; agent_id passed as stream parameter
+  console.log("RAILWAY_WS_URL raw:", RAILWAY_WS_URL);
   const streamUrl = `${RAILWAY_WS_URL}/ws/call?agent_id=${agent_id}&provider=twilio`;
+  console.log("streamUrl:", streamUrl);
 
   console.log(
     `[twilio webhook] Inbound call ${callSid} → agent: ${agent_id} → ws: ${streamUrl}`,
