@@ -195,7 +195,14 @@ export function handleCall(ws, req) {
   function resetVadTimer() {
     if (vadTimer) clearTimeout(vadTimer);
     vadTimer = setTimeout(async () => {
+      console.log(
+        "[vad] timer fired, chunks:",
+        pcmChunks.length,
+        "isProcessing:",
+        isProcessing,
+      );
       if (pcmChunks.length === 0 || isProcessing) return;
+
       const combined = Buffer.concat(pcmChunks);
       pcmChunks = [];
       isSpeaking = false;
