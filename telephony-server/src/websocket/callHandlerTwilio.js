@@ -213,6 +213,12 @@ export function handleCall(ws, req) {
   // ── Pipeline ─────────────────────────────────────────────────────────────────
 
   async function runPipeline(pcm16kBuffer) {
+    console.log(
+      "[twilio/pipeline] start, agent:",
+      !!agent,
+      "isProcessing:",
+      isProcessing,
+    );
     if (isProcessing || !agent) return;
     isProcessing = true;
     const t0 = Date.now();
@@ -344,6 +350,7 @@ export function handleCall(ws, req) {
           () => ws.close(1000, "max_duration"),
           MAX_CALL_DURATION_MS,
         );
+        isBotSpeaking = true;
         await playGreeting();
         break;
 
