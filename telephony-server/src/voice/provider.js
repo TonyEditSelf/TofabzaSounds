@@ -154,7 +154,11 @@ async function googleTTS({
   const body = {
     input: { text },
     voice: { languageCode, name: voiceName },
-    audioConfig: { audioEncoding: "LINEAR16", speakingRate },
+    audioConfig: {
+      audioEncoding: "MULAW",
+      sampleRateHertz: 8000,
+      speakingRate,
+    },
   };
   const res = await fetch(
     "https://texttospeech.googleapis.com/v1/text:synthesize",
@@ -180,6 +184,12 @@ async function googleTTS({
 // ── Google STT ────────────────────────────────────────────────────────────────
 
 async function googleSTT({ audioBuffer, languageCode = "ml-IN" }) {
+  console.log(
+    "[googleSTT] size:",
+    audioBuffer.length,
+    "first bytes:",
+    audioBuffer.slice(0, 4).toString("hex"),
+  );
   const token = await getGoogleAccessToken();
   const body = {
     audio: { content: audioBuffer.toString("base64") },

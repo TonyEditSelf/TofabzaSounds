@@ -190,6 +190,28 @@ export function handleCall(ws, req) {
     isBotSpeaking = false;
   }
 
+  function sendMulawAudio(mulawBuffer) {
+    if (!streamSid || ws.readyState !== 1) return;
+    isBotSpeaking = true;
+    chunkBuffer(mulawBuffer, 160).forEach((chunk) => {
+      if (ws.readyState !== 1) return;
+      ws.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: chunk.toString("base64") },
+        }),
+      );
+    });
+    ws.send(
+      JSON.stringify({
+        event: "mark",
+        streamSid,
+        mark: { name: `bot-${++markCounter}` },
+      }),
+    );
+  }
+
   // ── VAD ─────────────────────────────────────────────────────────────────────
 
   function resetVadTimer() {
@@ -283,7 +305,7 @@ export function handleCall(ws, req) {
       });
 
       console.log("[twilio/pipeline] TTS done, sending audio");
-      sendAudio(stripWavHeader(wav));
+      sendMulawAudio(stripWavHeader(wav));
       console.log(`[twilio/pipeline] ${Date.now() - t0}ms`);
     } catch (err) {
       console.error("[twilio/pipeline] ERROR:", err?.message, err?.stack);
@@ -295,7 +317,7 @@ export function handleCall(ws, req) {
           languageCode: agent?.language ?? lang,
           voiceId: "anand",
         });
-        sendAudio(stripWavHeader(wav));
+        sendMulawAudio(stripWavHeader(wav));
       } catch (_) {}
     } finally {
       isProcessing = false;
@@ -316,7 +338,7 @@ export function handleCall(ws, req) {
         languageCode: agent.language ?? lang,
         voiceId: agent.config?.voice_id ?? "anand",
       });
-      sendAudio(stripWavHeader(wav));
+      sendMulawAudio(stripWavHeader(wav));
     } catch (err) {
       console.error("[twilio/pipeline] ERROR:", err?.message, err?.stack);
     }
