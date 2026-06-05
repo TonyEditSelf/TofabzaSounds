@@ -16,7 +16,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { stt, tts } from "/app/lib/voice/provider.js";
+import { stt, tts } from "../voice/provider.js";
 import { getLLMReply } from "../pipeline/llm.js";
 import { stripWavHeader, upsample8kTo16k } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
