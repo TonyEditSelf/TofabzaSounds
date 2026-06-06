@@ -46,14 +46,19 @@ server.on("upgrade", (req, socket, head) => {
 
 wss.on("connection", (ws, req) => {
   const url = req.url || "";
+  const parsedUrl = new URL(url, "ws://localhost");
   console.log("[ws] incoming:", url);
 
-  if (url.startsWith("/ws/twilio")) {
+  if (
+    parsedUrl.pathname === "/ws/twilio" ||
+    (parsedUrl.pathname === "/ws/call" &&
+      parsedUrl.searchParams.get("provider") === "twilio")
+  ) {
     console.log("[ws] route → TWILIO");
     return handleCallTwilio(ws, req);
   }
 
-  if (url.startsWith("/ws/call")) {
+  if (parsedUrl.pathname === "/ws/call") {
     console.log("[ws] route → EXOTEL");
     const authHeader = req.headers["authorization"];
     const exotelConfigured =
@@ -85,6 +90,7 @@ wss.on("error", (err) => {
 server.listen(PORT, () => {
   console.log(`[server] Tofabza telephony server running on port ${PORT}`);
   console.log(`[server] Exotel WS: ws://localhost:${PORT}/ws/call`);
+  console.log(`[server] Twilio WS: ws://localhost:${PORT}/ws/twilio`);
 });
 
 // Graceful shutdown

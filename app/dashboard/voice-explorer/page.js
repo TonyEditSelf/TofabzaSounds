@@ -364,8 +364,8 @@ export default function VoiceExplorerPage() {
     async function loadProvider() {
       try {
         const res = await fetch("/api/settings");
-        const s = await res.json();
-        setProvider(s.voice_provider ?? "sarvam");
+        const data = await res.json();
+        setProvider(data?.settings?.voice_provider ?? data?.voice_provider ?? "sarvam");
       } catch (_) {}
     }
     loadProvider();

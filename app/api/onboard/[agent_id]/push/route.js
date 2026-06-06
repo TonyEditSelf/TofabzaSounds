@@ -3,6 +3,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+const ALLOWED_EMAIL = "tonyeappen@tofabza.com";
+
 // ── POST /api/onboard/[agent_id]/push ────────────────────
 // Operator-only. Substitutes form_data vars into agent prompt template,
 // updates agent config, queues KB file processing, marks submission pushed.
@@ -19,7 +21,7 @@ export async function POST(req, { params }) {
   const {
     data: { user },
   } = await sb.auth.getUser();
-  if (!user) {
+  if (!user || user.email !== ALLOWED_EMAIL) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
 

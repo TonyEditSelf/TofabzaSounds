@@ -24,11 +24,18 @@ const ALLOWED_EMAIL = "tonyeappen@tofabza.com";
 /**
  * Paths that skip the session check entirely.
  * Exotel webhooks POST here without a session - do NOT add auth there.
+ * Onboarding links are sent to clients, so the page + submit API are public.
  */
 const PUBLIC_PATHS = [
   "/login",
+  "/onboard",
+  "/api/onboard",
   "/api/webhooks",
 ];
+
+function pathMatchesPrefix(pathname, prefix) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
 
 // â”€â”€â”€ CSP Strings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -192,7 +199,7 @@ export async function proxy(req) {
   }
 
   // 5. Public paths: skip session check, just attach headers
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  const isPublic = PUBLIC_PATHS.some((p) => pathMatchesPrefix(pathname, p));
   if (isPublic) {
     const res = NextResponse.next();
     return attachSecurityHeaders(res);

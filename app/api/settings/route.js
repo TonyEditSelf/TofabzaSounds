@@ -74,6 +74,11 @@ export async function GET(request) {
       settings[row.key] = row.value;
     }
   }
+  settings.voice_provider =
+    settings.voice_provider ??
+    process.env.VOICE_PROVIDER ??
+    process.env.NEXT_PUBLIC_VOICE_PROVIDER ??
+    "sarvam";
 
   return NextResponse.json({ settings });
 }

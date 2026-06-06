@@ -12,12 +12,24 @@ const NEXTJS_URL = process.env.NEXTJS_URL; // e.g. https://your-app.vercel.app
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET;
 
 const LLM_MODELS = {
-  "gemini-flash": "gemini-2.5-flash-preview-05-20",
-  "gemini-pro": "gemini-2.5-pro-preview-05-06",
+  "gemini-flash": process.env.GEMINI_FLASH_MODEL ?? "gemini-2.5-flash",
+  "gemini-pro": process.env.GEMINI_PRO_MODEL ?? "gemini-2.5-pro",
 };
+
+const DEFAULT_MODEL =
+  process.env.GEMINI_CHAT_MODEL ?? process.env.GEMINI_MODEL ?? LLM_MODELS["gemini-flash"];
+const RAG_URL =
+  NEXTJS_URL && `${NEXTJS_URL.replace(/\/$/, "")}/api/rag/query`;
 
 function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+}
+
+function resolveModelCandidates(config = {}) {
+  const configured = config?.gemini_model ?? config?.llm_model;
+  const providerChoice = config?.llm_provider ?? "gemini-flash";
+  const preferred = configured ?? LLM_MODELS[providerChoice] ?? DEFAULT_MODEL;
+  return [...new Set([preferred, DEFAULT_MODEL, LLM_MODELS["gemini-flash"], LLM_MODELS["gemini-pro"]].filter(Boolean))];
 }
 
 function sanitisePrompt(prompt = "") {
@@ -31,10 +43,10 @@ function sanitisePrompt(prompt = "") {
  * @returns {Promise<string>}
  */
 async function fetchRagContext(agentId, query) {
-  if (!NEXTJS_URL || !INTERNAL_SECRET) return "";
+  if (!RAG_URL || !INTERNAL_SECRET) return "";
   try {
     const res = await axios.post(
-      `${NEXTJS_URL}/api/rag/query`,
+      RAG_URL,
       { query, owner_id: agentId, owner_type: "agent" },
       {
         headers: {
@@ -46,7 +58,20 @@ async function fetchRagContext(agentId, query) {
     );
     return res.data?.context ?? "";
   } catch (err) {
-    console.warn("[rag] fetch failed:", err?.message);
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const detail =
+      data?.message ??
+      data?.error ??
+      (typeof data === "string" ? data : "") ??
+      err?.message ??
+      err?.code ??
+      "unknown error";
+    console.warn(
+      `[rag] fetch failed url=${RAG_URL}`,
+      status ? `status=${status}` : "",
+      detail || err?.message || err?.code || "unknown error",
+    );
     return "";
   }
 }
@@ -82,8 +107,7 @@ export async function getLLMReply({ agentId, history, language, config }) {
   const langName = langNames[language] ?? "the caller's language";
   const langPrompt = `\n\nAlways respond in ${langName} only. Keep responses concise — this is a phone call.`;
 
-  const systemPrompt =
-    sanitisePrompt(config?.system_prompt) + langPrompt + ragContext;
+  const systemPrompt = sanitisePrompt(config?.prompt) + langPrompt + ragContext;
 
   // Build Gemini contents
   const geminiHistory = history.slice(-20, -1).map((m) => ({
@@ -96,27 +120,37 @@ export async function getLLMReply({ agentId, history, language, config }) {
     { role: "user", parts: [{ text: lastMessage }] },
   ];
 
-  const modelName =
-    LLM_MODELS[config?.llm_provider ?? "gemini-flash"] ??
-    LLM_MODELS["gemini-flash"];
+  const payload = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: {
+      maxOutputTokens: 300, // phone calls need short responses
+      temperature: 0.7,
+    },
+  };
 
-  try {
-    const res = await axios.post(
-      geminiUrl(modelName),
-      {
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents,
-        generationConfig: {
-          maxOutputTokens: 300, // phone calls need short responses
-          temperature: 0.7,
-        },
-      },
-      { timeout: 15000 },
-    );
+  for (const modelName of resolveModelCandidates(config)) {
+    try {
+      const res = await axios.post(geminiUrl(modelName), payload, {
+        timeout: 15000,
+      });
 
-    return res.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  } catch (err) {
-    console.error("[llm] Failed:", err?.response?.data ?? err?.message);
-    return "";
+      const reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      if (reply.trim()) {
+        console.log(`[llm] model=${modelName}`);
+        return reply;
+      }
+      console.warn(`[llm] Empty reply from model=${modelName}`);
+    } catch (err) {
+      const status = err?.response?.status;
+      const message =
+        err?.response?.data?.error?.message ??
+        err?.response?.data ??
+        err?.message;
+      console.error(`[llm] ${modelName} failed:`, status ? `${status}:` : "", message);
+      if (status && ![404, 429, 500, 502, 503, 504].includes(status)) break;
+    }
   }
+
+  return "";
 }

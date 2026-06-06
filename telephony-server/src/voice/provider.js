@@ -14,7 +14,7 @@ import crypto from "crypto";
 
 // ── Config from env ───────────────────────────────────────────────────────────
 
-const VOICE_PROVIDER = process.env.VOICE_PROVIDER ?? "sarvam";
+const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "sarvam").toLowerCase();
 
 // Sarvam
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
@@ -26,6 +26,7 @@ const SARVAM_TIMEOUT_MS = parseInt(
 
 // Google
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+let googleTokenCache = null;
 
 // ── Sarvam axios instance ─────────────────────────────────────────────────────
 
@@ -76,7 +77,12 @@ async function sarvamSTT({
 
   const form = new FormData();
   const safeMime = mimeType.split(";")[0].trim();
-  form.append("file", audioBuffer, {
+  const fileBuffer =
+    safeMime === "audio/wav" && audioBuffer.subarray(0, 4).toString() !== "RIFF"
+      ? pcmToWav(audioBuffer, 16000)
+      : audioBuffer;
+
+  form.append("file", fileBuffer, {
     filename: "audio.wav",
     contentType: safeMime,
   });
@@ -91,12 +97,41 @@ async function sarvamSTT({
   return response.data?.transcript ?? "";
 }
 
+function pcmToWav(pcm, sampleRate = 16000) {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  return Buffer.concat([header, pcm]);
+}
+
 // ── Google helpers ────────────────────────────────────────────────────────────
 
 async function getGoogleAccessToken() {
+  if (googleTokenCache && googleTokenCache.expiresAt > Date.now() + 60_000) {
+    return googleTokenCache.token;
+  }
+
   if (!GOOGLE_SERVICE_ACCOUNT_JSON)
     throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
   const { private_key, client_email } = JSON.parse(GOOGLE_SERVICE_ACCOUNT_JSON);
+  const normalizedPrivateKey = private_key.replace(/\\n/g, "\n");
 
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(
@@ -115,7 +150,7 @@ async function getGoogleAccessToken() {
   const unsigned = `${header}.${payload}`;
 
   const der = Buffer.from(
-    private_key.replace(/-----[^-]+-----|\n/g, ""),
+    normalizedPrivateKey.replace(/-----[^-]+-----|\n/g, ""),
     "base64",
   );
   const key = await crypto.subtle.importKey(
@@ -139,6 +174,10 @@ async function getGoogleAccessToken() {
   });
   const data = await res.json();
   if (!data.access_token) throw new Error("Failed to get Google access token");
+  googleTokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + ((data.expires_in ?? 3600) * 1000),
+  };
   return data.access_token;
 }
 
@@ -149,14 +188,16 @@ async function googleTTS({
   languageCode,
   voiceName,
   speakingRate = 1.0,
+  audioEncoding = "LINEAR16",
+  sampleRateHertz = 16000,
 }) {
   const token = await getGoogleAccessToken();
   const body = {
     input: { text },
     voice: { languageCode, name: voiceName },
     audioConfig: {
-      audioEncoding: "MULAW",
-      sampleRateHertz: 8000,
+      audioEncoding,
+      sampleRateHertz,
       speakingRate,
     },
   };
@@ -183,22 +224,35 @@ async function googleTTS({
 
 // ── Google STT ────────────────────────────────────────────────────────────────
 
-async function googleSTT({ audioBuffer, languageCode = "ml-IN" }) {
+async function googleSTT({
+  audioBuffer,
+  languageCode = "ml-IN",
+  encoding = "LINEAR16",
+  sampleRateHertz = 16000,
+  model,
+}) {
   console.log(
     "[googleSTT] size:",
     audioBuffer.length,
+    "encoding:",
+    encoding,
+    "sampleRate:",
+    sampleRateHertz,
     "first bytes:",
     audioBuffer.slice(0, 4).toString("hex"),
   );
   const token = await getGoogleAccessToken();
+  const config = {
+    encoding,
+    sampleRateHertz,
+    languageCode,
+    enableAutomaticPunctuation: true,
+  };
+  if (model) config.model = model;
+
   const body = {
     audio: { content: audioBuffer.toString("base64") },
-    config: {
-      encoding: "LINEAR16",
-      sampleRateHertz: 16000,
-      languageCode,
-      model: "latest_long",
-    },
+    config,
   };
   const res = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
     method: "POST",
@@ -225,6 +279,7 @@ export async function tts({
   voiceId,
   pace = 1.0,
   sampleRate = 16000,
+  audioEncoding,
 }) {
   const provider = VOICE_PROVIDER;
 
@@ -235,6 +290,8 @@ export async function tts({
       voiceName:
         voiceId ?? process.env.GOOGLE_DEFAULT_VOICE ?? "ml-IN-Wavenet-B",
       speakingRate: pace,
+      audioEncoding: audioEncoding ?? "LINEAR16",
+      sampleRateHertz: sampleRate,
     });
   }
 
@@ -251,12 +308,25 @@ export async function stt({
   audioBuffer,
   languageCode,
   mimeType = "audio/wav",
+  encoding,
+  sampleRateHertz,
+  model,
 }) {
   const provider = VOICE_PROVIDER;
 
   if (provider === "google") {
-    return googleSTT({ audioBuffer, languageCode });
+    return googleSTT({
+      audioBuffer,
+      languageCode,
+      encoding,
+      sampleRateHertz,
+      model,
+    });
   }
 
   return sarvamSTT({ audioBuffer, languageCode, mimeType });
+}
+
+export function getVoiceProvider() {
+  return VOICE_PROVIDER;
 }

@@ -13,6 +13,15 @@ import logger from "@/lib/logger";
 
 const RAILWAY_WS_URL = process.env.RAILWAY_WS_URL; // e.g. wss://tofabza-telephony.up.railway.app
 
+function toWebSocketBase(rawUrl) {
+  const trimmed = (rawUrl || "").trim().replace(/\/$/, "");
+  if (!trimmed) return "";
+  if (/^wss?:\/\//i.test(trimmed)) return trimmed;
+  if (/^https:\/\//i.test(trimmed)) return `wss://${trimmed.slice(8)}`;
+  if (/^http:\/\//i.test(trimmed)) return `ws://${trimmed.slice(7)}`;
+  return `wss://${trimmed}`;
+}
+
 export async function POST(req, { params }) {
   const { agent_id } = await params;
 
@@ -62,7 +71,7 @@ export async function POST(req, { params }) {
 
   // Convert wss:// Railway URL for the Stream target
   // Twilio connects via wss; agent_id passed as stream parameter
-  const streamUrl = `${RAILWAY_WS_URL}/ws/twilio`;
+  const streamUrl = `${toWebSocketBase(RAILWAY_WS_URL)}/ws/twilio`;
 
   // TwiML: connect call to Media Stream
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>

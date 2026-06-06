@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, use, useEffect } from "react";
+import { useState, use, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -11,8 +11,114 @@ import {
 } from "@/lib/sarvam/voices";
 import { GOOGLE_VOICES } from "@/lib/google/voices";
 
-const VOICE_PROVIDER = process.env.NEXT_PUBLIC_VOICE_PROVIDER ?? "sarvam";
-const VOICES = VOICE_PROVIDER === "google" ? GOOGLE_VOICES : BULBUL_V3_SPEAKERS;
+const VOICE_PROVIDER_FALLBACK = normaliseVoiceProvider(
+  process.env.NEXT_PUBLIC_VOICE_PROVIDER,
+);
+const GOOGLE_LANGUAGE_CODES = new Set(GOOGLE_VOICES.map((v) => v.language));
+
+function normaliseVoiceProvider(provider) {
+  return provider === "google" ? "google" : "sarvam";
+}
+
+async function fetchVoiceProvider() {
+  const res = await fetch("/api/settings");
+  if (!res.ok) return VOICE_PROVIDER_FALLBACK;
+  const data = await res.json();
+  return normaliseVoiceProvider(
+    data?.settings?.voice_provider ?? data?.voice_provider,
+  );
+}
+
+function getVoices(provider) {
+  return provider === "google" ? GOOGLE_VOICES : BULBUL_V3_SPEAKERS;
+}
+
+function getLanguageOptions(provider) {
+  return provider === "google"
+    ? TTS_SUPPORTED_LANGUAGES.filter((l) => GOOGLE_LANGUAGE_CODES.has(l.code))
+    : TTS_SUPPORTED_LANGUAGES;
+}
+
+function getDefaultLanguage(provider) {
+  return getLanguageOptions(provider)[0]?.code ?? "ml-IN";
+}
+
+function getVoicesForLanguage(provider, language) {
+  const voices = getVoices(provider);
+  if (provider !== "google") return voices;
+  return voices.filter((v) => v.language === language);
+}
+
+function getDefaultVoiceId(provider, language) {
+  const voices = getVoices(provider);
+  if (provider !== "google") {
+    return voices.some((v) => v.id === "anand") ? "anand" : (voices[0]?.id ?? "");
+  }
+  const languageVoices = getVoicesForLanguage(provider, language);
+  return languageVoices[0]?.id ?? "";
+}
+
+function isVoiceAvailableForLanguage(provider, voiceId, language) {
+  if (!voiceId) return false;
+  return getVoicesForLanguage(provider, language).some((v) => v.id === voiceId);
+}
+
+function normalizeLanguage(provider, language) {
+  const languageOptions = getLanguageOptions(provider);
+  return languageOptions.some((l) => l.code === language)
+    ? language
+    : getDefaultLanguage(provider);
+}
+
+function normalizeFormForProvider(provider, form) {
+  const language = normalizeLanguage(provider, form.language);
+  return {
+    ...form,
+    language,
+    voice_id: isVoiceAvailableForLanguage(provider, form.voice_id, language)
+      ? form.voice_id
+      : getDefaultVoiceId(provider, language),
+  };
+}
+
+function getDefaultForm(provider = VOICE_PROVIDER_FALLBACK) {
+  const language = getDefaultLanguage(provider);
+  return {
+    client_id: "",
+    name: "",
+    language,
+    voice_id: getDefaultVoiceId(provider, language),
+    llm_provider: "gemini-flash",
+    prompt: "",
+    greeting: "",
+    exotel_number: "",
+    max_call_duration: 300,
+    facility_type: "polyclinic",
+    fallback_number: "",
+  };
+}
+
+function getFormFromAgent(agent, provider = VOICE_PROVIDER_FALLBACK) {
+  const cfg = agent.config ?? {};
+  const language = normalizeLanguage(provider, agent.language);
+  const voice_id = isVoiceAvailableForLanguage(provider, cfg.voice_id, language)
+    ? cfg.voice_id
+    : getDefaultVoiceId(provider, language);
+
+  return {
+    client_id: agent.client_id ?? "",
+    name: agent.name ?? "",
+    language,
+    voice_id,
+    llm_provider: cfg.llm_provider ?? "gemini-flash",
+    prompt: cfg.prompt ?? "",
+    greeting: cfg.greeting ?? "",
+    exotel_number: cfg.exotel_number ?? "",
+    max_call_duration: cfg.max_call_duration ?? 300,
+    facility_type: cfg.facility_type ?? "polyclinic",
+    fallback_number: cfg.fallback_number ?? "",
+  };
+}
 
 const supabase = createClient();
 
@@ -385,53 +491,50 @@ export default function AgentDetailPage({ params }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmName, setConfirmName] = useState("");
+  const [voiceProvider, setVoiceProvider] = useState(VOICE_PROVIDER_FALLBACK);
+  const voiceProviderRef = useRef(VOICE_PROVIDER_FALLBACK);
+  const [form, setForm] = useState(() =>
+    getDefaultForm(VOICE_PROVIDER_FALLBACK),
+  );
 
   const {
     data: agent,
     isLoading,
     mutate,
-  } = useSWR(`agent:${id}`, () => fetchAgent(id));
+  } = useSWR(`agent:${id}`, () => fetchAgent(id), {
+    onSuccess: (nextAgent) =>
+      setForm(getFormFromAgent(nextAgent, voiceProviderRef.current)),
+  });
+  useSWR("voice-provider", fetchVoiceProvider, {
+    revalidateOnFocus: false,
+    onSuccess: (provider) => {
+      voiceProviderRef.current = provider;
+      setVoiceProvider(provider);
+      setForm((f) => normalizeFormForProvider(provider, f));
+    },
+  });
   const { data: clients = [] } = useSWR("clients-list", fetchClients, {
     revalidateOnFocus: false,
   });
 
-  const [form, setForm] = useState({
-    client_id: "",
-    name: "",
-    language: "ml-IN",
-    voice_id: VOICE_PROVIDER === "google" ? "ml-IN-Wavenet-A" : "anand",
-    llm_provider: "gemini-flash",
-    prompt: "",
-    greeting: "",
-    exotel_number: "",
-    max_call_duration: 300,
-    facility_type: "polyclinic",
-    fallback_number: "",
-  });
-
-  useEffect(() => {
-    if (agent) {
-      const cfg = agent.config ?? {};
-      setForm({
-        client_id: agent.client_id ?? "",
-        name: agent.name ?? "",
-        language: agent.language ?? "ml-IN",
-        voice_id:
-          cfg.voice_id ??
-          (VOICE_PROVIDER === "google" ? "ml-IN-Wavenet-A" : "anand"),
-        llm_provider: cfg.llm_provider ?? "gemini-flash",
-        prompt: cfg.prompt ?? "",
-        greeting: cfg.greeting ?? "",
-        exotel_number: cfg.exotel_number ?? "",
-        max_call_duration: cfg.max_call_duration ?? 300,
-        facility_type: cfg.facility_type ?? "polyclinic",
-        fallback_number: cfg.fallback_number ?? "",
-      });
-    }
-  }, [agent]);
-
   function set(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
+    setForm((f) => {
+      if (field === "language") {
+        const language = normalizeLanguage(voiceProvider, value);
+        return {
+          ...f,
+          language,
+          voice_id: isVoiceAvailableForLanguage(
+            voiceProvider,
+            f.voice_id,
+            language,
+          )
+            ? f.voice_id
+            : getDefaultVoiceId(voiceProvider, language),
+        };
+      }
+      return { ...f, [field]: value };
+    });
   }
 
   async function handleSave() {
@@ -445,6 +548,10 @@ export default function AgentDetailPage({ params }) {
     }
     if (form.prompt.length > 8000) {
       toast.error("System prompt must be under 8000 characters.");
+      return;
+    }
+    if (!isVoiceAvailableForLanguage(voiceProvider, form.voice_id, form.language)) {
+      toast.error("Select a voice available for the chosen language.");
       return;
     }
     const isComplete = !!(form.prompt.trim() && form.language && form.voice_id);
@@ -670,7 +777,7 @@ export default function AgentDetailPage({ params }) {
                 onChange={(e) => set("language", e.target.value)}
                 style={s.select}
               >
-                {TTS_SUPPORTED_LANGUAGES.map((l) => (
+                {getLanguageOptions(voiceProvider).map((l) => (
                   <option key={l.code} value={l.code}>
                     {l.name}
                   </option>
@@ -684,7 +791,7 @@ export default function AgentDetailPage({ params }) {
                 onChange={(e) => set("voice_id", e.target.value)}
                 style={s.select}
               >
-                {VOICES.map((v) => (
+                {getVoicesForLanguage(voiceProvider, form.language).map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.gender})
                   </option>
