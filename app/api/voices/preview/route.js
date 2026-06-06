@@ -6,7 +6,7 @@
  */
 
 import { requireOperator } from "@/lib/auth/requireOperator";
-import { tts } from "@/lib/voice/provider";
+import { textToSpeech as sarvamTextToSpeech } from "@/lib/sarvam/client";
 
 export const maxDuration = 15; // seconds — Vercel route timeout
 
@@ -32,10 +32,10 @@ export async function POST(req) {
   }
 
   try {
-    const audioBuffer = await tts({
+    const audioBuffer = await sarvamTextToSpeech({
       text,
       languageCode: languageCode ?? "ml-IN",
-      voiceId: voice_id,
+      speaker: voice_id,
       pace: speed,
     });
     return new Response(audioBuffer, {

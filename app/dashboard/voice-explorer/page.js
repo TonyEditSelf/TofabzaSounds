@@ -19,7 +19,7 @@ const LANGUAGES = [
   { code: "gu-IN", label: "Gujarati" },
   { code: "bn-IN", label: "Bengali" },
   { code: "pa-IN", label: "Punjabi" },
-  { code: "or-IN", label: "Odia" },
+  { code: "od-IN", label: "Odia" },
 ];
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
@@ -175,7 +175,7 @@ function VoiceCard({ voice, provider, previewText, speed, lang, onFavToggle }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          voice_id: voice.voice_id,
+          voice_id: voice.voice_id ?? voice.id,
           text: previewText,
           speed,
           languageCode: lang,
