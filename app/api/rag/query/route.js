@@ -15,29 +15,42 @@ import { ragQuery } from "@/lib/rag/query";
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET;
 
 export async function POST(req) {
-  // Validate internal secret
-  const secret = req.headers.get("x-internal-secret");
-  if (!INTERNAL_SECRET || secret !== INTERNAL_SECRET) {
-    return Response.json(
-      { error: { code: "UNAUTHORISED", message: "Invalid internal secret." } },
-      { status: 401 },
-    );
-  }
+  try {
+    // Validate internal secret
+    const secret = req.headers.get("x-internal-secret");
+    if (!INTERNAL_SECRET || secret !== INTERNAL_SECRET) {
+      return Response.json(
+        { error: { code: "UNAUTHORISED", message: "Invalid internal secret." } },
+        { status: 401 },
+      );
+    }
 
-  const { query, owner_id, owner_type } = await req.json();
+    const { query, owner_id, owner_type } = await req.json();
 
-  if (!query || !owner_id || !owner_type) {
+    if (!query || !owner_id || !owner_type) {
+      return Response.json(
+        {
+          error: {
+            code: "INVALID_INPUT",
+            message: "query, owner_id, owner_type are required.",
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const context = await ragQuery({ query, owner_id, owner_type });
+    return Response.json({ context });
+  } catch (err) {
+    console.error("[rag/query] route failed:", err);
     return Response.json(
       {
         error: {
-          code: "INVALID_INPUT",
-          message: "query, owner_id, owner_type are required.",
+          code: "RAG_QUERY_FAILED",
+          message: err?.message ?? "Unknown RAG query error.",
         },
       },
-      { status: 400 },
+      { status: 500 },
     );
   }
-
-  const context = await ragQuery({ query, owner_id, owner_type });
-  return Response.json({ context });
 }
