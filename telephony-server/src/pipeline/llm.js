@@ -1,14 +1,14 @@
 /**
  * telephony-server/src/pipeline/llm.js
  *
- * LLM pipeline: RAG context fetch + Gemini Flash/Pro call.
- * Called after STT returns transcript.
+ * LLM pipeline: RAG context fetch + Gemini reply.
+ * Provides both batch and streaming helpers for Twilio playback.
  */
 
 import axios from "axios";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const NEXTJS_URL = process.env.NEXTJS_URL; // e.g. https://your-app.vercel.app
+const NEXTJS_URL = process.env.NEXTJS_URL;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET;
 
 const LLM_MODELS = {
@@ -17,7 +17,9 @@ const LLM_MODELS = {
 };
 
 const DEFAULT_MODEL =
-  process.env.GEMINI_CHAT_MODEL ?? process.env.GEMINI_MODEL ?? LLM_MODELS["gemini-flash"];
+  process.env.GEMINI_CHAT_MODEL ??
+  process.env.GEMINI_MODEL ??
+  LLM_MODELS["gemini-flash"];
 const RAG_URL =
   NEXTJS_URL && `${NEXTJS_URL.replace(/\/$/, "")}/api/rag/query`;
 
@@ -25,23 +27,30 @@ function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 }
 
+function geminiStreamUrl(model) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+}
+
 function resolveModelCandidates(config = {}) {
   const configured = config?.gemini_model ?? config?.llm_model;
   const providerChoice = config?.llm_provider ?? "gemini-flash";
   const preferred = configured ?? LLM_MODELS[providerChoice] ?? DEFAULT_MODEL;
-  return [...new Set([preferred, DEFAULT_MODEL, LLM_MODELS["gemini-flash"], LLM_MODELS["gemini-pro"]].filter(Boolean))];
+  return [
+    ...new Set(
+      [
+        preferred,
+        DEFAULT_MODEL,
+        LLM_MODELS["gemini-flash"],
+        LLM_MODELS["gemini-pro"],
+      ].filter(Boolean),
+    ),
+  ];
 }
 
 function sanitisePrompt(prompt = "") {
   return prompt.replace(/<\|.*?\|>/g, "").slice(0, 8000);
 }
 
-/**
- * Fetch RAG context from Next.js internal route.
- * @param {string} agentId
- * @param {string} query
- * @returns {Promise<string>}
- */
 async function fetchRagContext(agentId, query) {
   if (!RAG_URL || !INTERNAL_SECRET) return "";
   try {
@@ -76,21 +85,10 @@ async function fetchRagContext(agentId, query) {
   }
 }
 
-/**
- * @param {object} params
- * @param {string} params.agentId
- * @param {Array}  params.history  - [{ role: "user"|"assistant", content: string }]
- * @param {string} params.language - BCP-47
- * @param {object} params.config   - agent.config
- * @returns {Promise<string>} reply text
- */
-export async function getLLMReply({ agentId, history, language, config }) {
+async function buildGeminiPayload({ agentId, history, language, config }) {
   const lastMessage = history[history.length - 1]?.content ?? "";
-
-  // Fetch RAG context
   const ragContext = await fetchRagContext(agentId, lastMessage);
 
-  // Language instruction
   const langNames = {
     "ml-IN": "Malayalam",
     "hi-IN": "Hindi",
@@ -105,29 +103,75 @@ export async function getLLMReply({ agentId, history, language, config }) {
     "od-IN": "Odia",
   };
   const langName = langNames[language] ?? "the caller's language";
-  const langPrompt = `\n\nAlways respond in ${langName} only. Keep responses concise — this is a phone call.`;
+  const langPrompt =
+    `\n\nAlways respond in ${langName} only. ` +
+    "Keep responses concise. This is a phone call.";
 
   const systemPrompt = sanitisePrompt(config?.prompt) + langPrompt + ragContext;
-
-  // Build Gemini contents
   const geminiHistory = history.slice(-20, -1).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
 
-  const contents = [
-    ...geminiHistory,
-    { role: "user", parts: [{ text: lastMessage }] },
-  ];
-
-  const payload = {
-    system_instruction: { parts: [{ text: systemPrompt }] },
-    contents,
-    generationConfig: {
-      maxOutputTokens: 300, // phone calls need short responses
-      temperature: 0.7,
+  return {
+    payload: {
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [
+        ...geminiHistory,
+        { role: "user", parts: [{ text: lastMessage }] },
+      ],
+      generationConfig: {
+        maxOutputTokens: 220,
+        temperature: 0.55,
+      },
     },
   };
+}
+
+async function* readGeminiSseText(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const data = event
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("");
+
+      if (!data || data === "[DONE]") continue;
+
+      let json;
+      try {
+        json = JSON.parse(data);
+      } catch (_) {
+        continue;
+      }
+
+      const parts = json?.candidates?.[0]?.content?.parts ?? [];
+      for (const part of parts) {
+        if (part?.text) yield part.text;
+      }
+    }
+  }
+}
+
+export async function getLLMReply({ agentId, history, language, config }) {
+  const { payload } = await buildGeminiPayload({
+    agentId,
+    history,
+    language,
+    config,
+  });
 
   for (const modelName of resolveModelCandidates(config)) {
     try {
@@ -147,8 +191,64 @@ export async function getLLMReply({ agentId, history, language, config }) {
         err?.response?.data?.error?.message ??
         err?.response?.data ??
         err?.message;
-      console.error(`[llm] ${modelName} failed:`, status ? `${status}:` : "", message);
+      console.error(
+        `[llm] ${modelName} failed:`,
+        status ? `${status}:` : "",
+        message,
+      );
       if (status && ![404, 429, 500, 502, 503, 504].includes(status)) break;
+    }
+  }
+
+  return "";
+}
+
+export async function streamLLMReply({
+  agentId,
+  history,
+  language,
+  config,
+  signal,
+  onToken,
+}) {
+  const { payload } = await buildGeminiPayload({
+    agentId,
+    history,
+    language,
+    config,
+  });
+
+  for (const modelName of resolveModelCandidates(config)) {
+    try {
+      const res = await fetch(geminiStreamUrl(modelName), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const message = err?.error?.message ?? res.statusText;
+        console.error(
+          `[llm/stream] ${modelName} failed:`,
+          `${res.status}:`,
+          message,
+        );
+        if (![404, 429, 500, 502, 503, 504].includes(res.status)) break;
+        continue;
+      }
+
+      console.log(`[llm/stream] model=${modelName}`);
+      let fullText = "";
+      for await (const token of readGeminiSseText(res.body)) {
+        fullText += token;
+        await onToken?.(token, fullText);
+      }
+      return fullText.trim();
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      console.error(`[llm/stream] ${modelName} failed:`, err?.message);
     }
   }
 

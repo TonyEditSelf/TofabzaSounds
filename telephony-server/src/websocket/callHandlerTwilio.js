@@ -14,7 +14,8 @@
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
 import { getVoiceProvider, stt, tts } from "../voice/provider.js";
-import { getLLMReply } from "../pipeline/llm.js";
+import { createStreamingStt, createStreamingTts } from "../voice/streaming.js";
+import { getLLMReply, streamLLMReply } from "../pipeline/llm.js";
 import { upsample8kTo16k } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
 
@@ -26,12 +27,17 @@ function intEnv(name, fallback) {
 }
 
 const VAD_SILENCE_THRESHOLD = intEnv("TWILIO_VAD_THRESHOLD", 180);
-const VAD_SILENCE_DURATION  = intEnv("TWILIO_VAD_SILENCE_MS", 1200);
+const VAD_SILENCE_DURATION  = intEnv("TWILIO_VAD_SILENCE_MS", 700);
 const MIN_UTTERANCE_MS      = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
 const MAX_CALL_DURATION_MS  = (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
-const PIPELINE_TIMEOUT_MS   = 1500;  // play chime if pipeline takes longer than this
+const PIPELINE_TIMEOUT_MS   = intEnv("TWILIO_PIPELINE_CHIME_MS", 2500);
+const BARGE_IN_THRESHOLD    = intEnv("TWILIO_BARGE_IN_THRESHOLD", 300);
+const TTS_MIN_CHARS         = intEnv("TWILIO_TTS_MIN_CHARS", 45);
+const TTS_MAX_CHARS         = intEnv("TWILIO_TTS_MAX_CHARS", 130);
 const TWILIO_FRAME_MS       = 20;
 const TWILIO_SAMPLE_RATE    = 8000;
+const STREAMING_PIPELINE =
+  (process.env.TWILIO_STREAMING_PIPELINE ?? "false").toLowerCase() === "true";
 
 // ── Supabase ──────────────────────────────────────────────────────────────────
 
@@ -107,10 +113,13 @@ export function handleCall(ws, req) {
   let callTimeout  = null;
   let vadTimer     = null;
   let botAudioTimer = null;
+  let activeReplyAbort = null;
+  let playbackGeneration = 0;
   let callStart    = Date.now();
   let callEnded    = false;
   let markCounter  = 0;
   let pendingMark  = null;
+  let streamingStt = null;
   const voiceProvider = getVoiceProvider();
 
   console.log(`[twilio] New connection agentId=${agentId} voiceProvider=${voiceProvider}`);
@@ -130,6 +139,25 @@ export function handleCall(ws, req) {
     }
     agent = data;
     console.log(`[twilio] Agent loaded: ${agent.name}`);
+  }
+
+  async function initStreamingPipeline() {
+    if (!STREAMING_PIPELINE || streamingStt) return;
+    streamingStt = await createStreamingStt({
+      provider: voiceProvider,
+      languageCode: agent.language ?? lang,
+      onInterimTranscript: (text) => {
+        console.log(`[twilio/stt/interim] "${text.slice(0, 80)}"`);
+      },
+      onFinalTranscript: async (text) => {
+        const transcript = text?.trim();
+        if (!transcript || isProcessing || !agent) return;
+        console.log(`[twilio/stt/final] "${transcript}"`);
+        await runReplyPipeline(transcript);
+      },
+      onError: (err) => console.error("[twilio/stt/stream] ERROR:", err?.message),
+    });
+    console.log(`[twilio] streaming pipeline enabled provider=${voiceProvider}`);
   }
 
   // ── Send audio to Twilio ────────────────────────────────────────────────────
@@ -180,6 +208,9 @@ export function handleCall(ws, req) {
 
   function sendClear() {
     if (!streamSid || ws.readyState !== 1) return;
+    playbackGeneration++;
+    activeReplyAbort?.abort();
+    activeReplyAbort = null;
     ws.send(JSON.stringify({ event: "clear", streamSid }));
     markBotAudioDone(null, "clear");
   }
@@ -200,6 +231,17 @@ export function handleCall(ws, req) {
     console.log(
       `[twilio/vad] finish ${reason}, chunks=${pcmChunks.length} audioMs=${utteranceMs} isProcessing=${isProcessing}`,
     );
+
+    if (STREAMING_PIPELINE && streamingStt) {
+      streamingStt.flush();
+      pcmChunks = [];
+      sttChunks = [];
+      utteranceMs = 0;
+      silenceMs = 0;
+      isSpeaking = false;
+      return;
+    }
+
     if (pcmChunks.length === 0 || isProcessing) return;
 
     const sttBuffer = Buffer.concat(sttChunks.length ? sttChunks : pcmChunks);
@@ -220,14 +262,178 @@ export function handleCall(ws, req) {
 
   // ── Pipeline ─────────────────────────────────────────────────────────────────
 
+  function takeReadyTtsChunks(text, force = false) {
+    const chunks = [];
+    let rest = text.replace(/\s+/g, " ");
+
+    while (rest.trim().length) {
+      const boundaryMatches = [...rest.matchAll(/[.!?\u0964]\s+/g)];
+      const boundary = boundaryMatches.find(
+        (m) => m.index + m[0].length >= TTS_MIN_CHARS,
+      );
+
+      if (boundary) {
+        const end = boundary.index + boundary[0].length;
+        chunks.push(rest.slice(0, end).trim());
+        rest = rest.slice(end).trimStart();
+        continue;
+      }
+
+      if (rest.length >= TTS_MAX_CHARS) {
+        const splitAt = rest.lastIndexOf(" ", TTS_MAX_CHARS);
+        const end = splitAt > TTS_MIN_CHARS ? splitAt : TTS_MAX_CHARS;
+        chunks.push(rest.slice(0, end).trim());
+        rest = rest.slice(end).trimStart();
+        continue;
+      }
+
+      break;
+    }
+
+    if (force && rest.trim()) {
+      chunks.push(rest.trim());
+      rest = "";
+    }
+
+    return { chunks, rest };
+  }
+
+  async function runReplyPipeline(transcript, manageProcessing = true) {
+    if (manageProcessing) {
+      if (isProcessing || !agent) return;
+      isProcessing = true;
+    }
+
+    let generation = null;
+    let replyAbort = null;
+    const t0 = Date.now();
+
+    try {
+      if (isBotSpeaking) sendClear();
+      generation = ++playbackGeneration;
+      replyAbort = new AbortController();
+      activeReplyAbort = replyAbort;
+
+      history.push({ role: "user", content: transcript });
+
+      let pendingText = "";
+      let reply = "";
+      let sentAnyAudio = false;
+      let ttsStream = null;
+      let ttsQueue = Promise.resolve();
+
+      try {
+        ttsStream = STREAMING_PIPELINE
+          ? await createStreamingTts({
+              provider: voiceProvider,
+              languageCode: agent.language ?? lang,
+              voiceId: agent.config?.voice_id,
+              pace: agent.config?.pace ?? 1.0,
+              onMulawAudio: (mulawBuf) => {
+                if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+                sentAnyAudio = true;
+                sendMulawAudio(mulawBuf);
+              },
+              onError: (err) => console.error("[twilio/tts/stream] ERROR:", err?.message),
+            })
+          : null;
+      } catch (err) {
+        console.warn("[twilio/tts/stream] unavailable, using chunked batch:", err?.message);
+      }
+
+      const enqueueTts = (text) => {
+        if (!text?.trim()) return;
+        const chunkText = text.trim();
+        if (ttsStream) {
+          sentAnyAudio = true;
+          ttsStream.sendText(chunkText);
+          return;
+        }
+        sentAnyAudio = true;
+        ttsQueue = ttsQueue.then(async () => {
+          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          const mulawBuf = await tts({
+            text: chunkText,
+            languageCode: agent.language ?? lang,
+            voiceId: agent.config?.voice_id,
+            pace: agent.config?.pace ?? 1.0,
+            sampleRate: TWILIO_SAMPLE_RATE,
+            audioEncoding: "MULAW",
+          });
+          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          sendMulawAudio(mulawBuf);
+        });
+      };
+
+      try {
+        reply = await streamLLMReply({
+          agentId: agent.id,
+          history,
+          language: agent.language ?? lang,
+          config: agent.config,
+          signal: replyAbort.signal,
+          onToken: (token) => {
+            pendingText += token;
+            const ready = takeReadyTtsChunks(pendingText);
+            pendingText = ready.rest;
+            ready.chunks.forEach(enqueueTts);
+          },
+        });
+
+        const finalChunks = takeReadyTtsChunks(pendingText, true);
+        finalChunks.chunks.forEach(enqueueTts);
+        if (ttsStream) ttsStream.flush();
+        await ttsQueue;
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          console.log("[twilio/llm] streamed reply aborted");
+          return;
+        }
+        console.warn("[twilio/llm] streaming failed, falling back:", err?.message);
+      }
+
+      if (!reply?.trim() || !sentAnyAudio) {
+        reply = await getLLMReply({
+          agentId: agent.id,
+          history,
+          language: agent.language ?? lang,
+          config: agent.config,
+        });
+        if (!reply?.trim()) throw new Error("LLM returned an empty reply");
+        const mulawBuf = await tts({
+          text: reply,
+          languageCode: agent.language ?? lang,
+          voiceId: agent.config?.voice_id,
+          pace: agent.config?.pace ?? 1.0,
+          sampleRate: TWILIO_SAMPLE_RATE,
+          audioEncoding: "MULAW",
+        });
+        sendMulawAudio(mulawBuf);
+      }
+
+      console.log(`[twilio/llm] "${reply.slice(0, 80)}"`);
+      history = history.slice(-40);
+      history.push({ role: "assistant", content: reply });
+      console.log(`[twilio/pipeline] reply done in ${Date.now() - t0}ms`);
+    } finally {
+      if (activeReplyAbort === replyAbort) activeReplyAbort = null;
+      if (manageProcessing) isProcessing = false;
+    }
+  }
+
   async function runPipeline(sttBuffer) {
     if (isProcessing || !agent) return;
     isProcessing = true;
+    let generation = null;
+    let replyAbort = null;
     const t0 = Date.now();
     console.log(`[twilio/pipeline] start, provider=${voiceProvider}, bufSize=${sttBuffer.length}`);
 
     try {
       if (isBotSpeaking) sendClear();
+      generation = ++playbackGeneration;
+      replyAbort = new AbortController();
+      activeReplyAbort = replyAbort;
 
       const chimeTimer = setTimeout(() => playChime(), PIPELINE_TIMEOUT_MS);
 
@@ -254,15 +460,80 @@ export function handleCall(ws, req) {
         return;
       }
 
+      await runReplyPipeline(transcript, false);
+      return;
+
       history.push({ role: "user", content: transcript });
 
       // 2. LLM + RAG
-      const reply = await getLLMReply({
-        agentId:  agent.id,
-        history,
-        language: agent.language ?? lang,
-        config:   agent.config,
-      });
+      let pendingText = "";
+      let reply = "";
+      let sentAnyAudio = false;
+      let ttsQueue = Promise.resolve();
+
+      const enqueueTts = (text) => {
+        if (!text?.trim()) return;
+        const chunkText = text.trim();
+        sentAnyAudio = true;
+        ttsQueue = ttsQueue.then(async () => {
+          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          const mulawBuf = await tts({
+            text:         chunkText,
+            languageCode: agent.language ?? lang,
+            voiceId:      agent.config?.voice_id,
+            pace:         agent.config?.pace ?? 1.0,
+            sampleRate:   TWILIO_SAMPLE_RATE,
+            audioEncoding: "MULAW",
+          });
+          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          sendMulawAudio(mulawBuf);
+        });
+      };
+
+      try {
+        reply = await streamLLMReply({
+          agentId:  agent.id,
+          history,
+          language: agent.language ?? lang,
+          config:   agent.config,
+          signal:   replyAbort.signal,
+          onToken: (token) => {
+            pendingText += token;
+            const ready = takeReadyTtsChunks(pendingText);
+            pendingText = ready.rest;
+            ready.chunks.forEach(enqueueTts);
+          },
+        });
+
+        const finalChunks = takeReadyTtsChunks(pendingText, true);
+        finalChunks.chunks.forEach(enqueueTts);
+        await ttsQueue;
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          console.log("[twilio/llm] streamed reply aborted");
+          return;
+        }
+        console.warn("[twilio/llm] streaming failed, falling back:", err?.message);
+      }
+
+      if (!reply?.trim() || !sentAnyAudio) {
+        reply = await getLLMReply({
+          agentId:  agent.id,
+          history,
+          language: agent.language ?? lang,
+          config:   agent.config,
+        });
+        if (!reply?.trim()) throw new Error("LLM returned an empty reply");
+        const fallbackMulawBuf = await tts({
+          text:         reply,
+          languageCode: agent.language ?? lang,
+          voiceId:      agent.config?.voice_id,
+          pace:         agent.config?.pace ?? 1.0,
+          sampleRate:   TWILIO_SAMPLE_RATE,
+          audioEncoding: "MULAW",
+        });
+        sendMulawAudio(fallbackMulawBuf);
+      }
       if (!reply?.trim()) throw new Error("LLM returned an empty reply");
       console.log(`[twilio/llm] "${reply.slice(0, 80)}"`);
 
@@ -270,15 +541,6 @@ export function handleCall(ws, req) {
       history.push({ role: "assistant", content: reply });
 
       // 3. TTS — Google returns raw mulaw 8kHz, send directly
-      const mulawBuf = await tts({
-        text:         reply,
-        languageCode: agent.language ?? lang,
-        voiceId:      agent.config?.voice_id,
-        pace:         agent.config?.pace ?? 1.0,
-        sampleRate:   TWILIO_SAMPLE_RATE,
-        audioEncoding: "MULAW",
-      });
-      sendMulawAudio(mulawBuf);
       console.log(`[twilio/pipeline] done in ${Date.now() - t0}ms`);
 
     } catch (err) {
@@ -295,6 +557,7 @@ export function handleCall(ws, req) {
         sendMulawAudio(mulawBuf);
       } catch (_) {}
     } finally {
+      if (replyAbort && activeReplyAbort === replyAbort) activeReplyAbort = null;
       isProcessing = false;
     }
   }
@@ -342,6 +605,12 @@ export function handleCall(ws, req) {
           direction:    "inbound",
         });
 
+        try {
+          await initStreamingPipeline();
+        } catch (err) {
+          console.error("[twilio] streaming init error:", err?.message);
+        }
+
         callTimeout = setTimeout(() => ws.close(1000, "max_duration"), MAX_CALL_DURATION_MS);
 
         // Play greeting — Google TTS returns raw mulaw 8kHz, send directly
@@ -371,12 +640,57 @@ export function handleCall(ws, req) {
         const mulawBuf = Buffer.from(payload, "base64");
         const pcm8k    = decodeMulaw(mulawBuf);
         const pcm16k   = upsample8kTo16k(pcm8k);
+        const rms = getRMS(pcm16k);
 
-        // Drop frames while the agent is talking or the pipeline is busy.
-        if (isBotSpeaking || isProcessing) break;
+        // Barge-in: caller speech should immediately stop bot playback.
+        if (isBotSpeaking) {
+          if (rms > BARGE_IN_THRESHOLD) {
+            console.log(`[twilio/barge-in] caller interrupted, rms=${rms.toFixed(0)}`);
+            sendClear();
+            pcmChunks = [];
+            sttChunks = [];
+            utteranceMs = 0;
+            silenceMs = 0;
+            isSpeaking = true;
+            if (STREAMING_PIPELINE && streamingStt) {
+              streamingStt.sendTwilioMulaw(mulawBuf);
+              utteranceMs += TWILIO_FRAME_MS;
+            } else {
+              appendSpeechFrame(mulawBuf, pcm16k);
+            }
+            armVadTimer();
+          }
+          break;
+        }
+
+        // Drop frames while the pipeline is busy producing the next answer.
+        if (isProcessing) break;
+
+        if (STREAMING_PIPELINE && streamingStt) {
+          if (rms > VAD_SILENCE_THRESHOLD) {
+            if (!isSpeaking) {
+              isSpeaking = true;
+              silenceMs = 0;
+              console.log(`[twilio/vad] speech started, rms=${rms.toFixed(0)}`);
+            }
+            silenceMs = 0;
+            utteranceMs += TWILIO_FRAME_MS;
+            streamingStt.sendTwilioMulaw(mulawBuf);
+            armVadTimer();
+          } else if (isSpeaking) {
+            utteranceMs += TWILIO_FRAME_MS;
+            silenceMs += TWILIO_FRAME_MS;
+            streamingStt.sendTwilioMulaw(mulawBuf);
+            if (silenceMs >= VAD_SILENCE_DURATION) {
+              await finishUtterance(`silence-${silenceMs}ms`);
+            } else {
+              armVadTimer();
+            }
+          }
+          break;
+        }
 
         // RMS-based VAD (same as Exotel handler)
-        const rms = getRMS(pcm16k);
         if (rms > VAD_SILENCE_THRESHOLD) {
           if (!isSpeaking) {
             isSpeaking = true;
@@ -422,6 +736,8 @@ export function handleCall(ws, req) {
     if (callTimeout) clearTimeout(callTimeout);
     if (vadTimer)    clearTimeout(vadTimer);
     if (botAudioTimer) clearTimeout(botAudioTimer);
+    streamingStt?.close();
+    streamingStt = null;
     const duration = Math.floor((Date.now() - callStart) / 1000);
     await updateCallLog(supabase, callLogId, {
       status:     reason === "callended" ? "completed" : reason,

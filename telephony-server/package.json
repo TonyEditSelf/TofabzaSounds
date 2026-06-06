@@ -9,6 +9,8 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "@google-cloud/speech": "^7.3.1",
+    "@google-cloud/text-to-speech": "^6.4.1",
     "@supabase/supabase-js": "^2.49.4",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
