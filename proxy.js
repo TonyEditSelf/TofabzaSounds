@@ -31,6 +31,7 @@ const PUBLIC_PATHS = [
   "/onboard",
   "/api/onboard",
   "/api/webhooks",
+  "/api/rag/query",
 ];
 
 function pathMatchesPrefix(pathname, prefix) {
