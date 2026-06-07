@@ -120,6 +120,8 @@ export function handleCall(ws, req) {
   let markCounter  = 0;
   let pendingMark  = null;
   let streamingStt = null;
+  let latestStreamingInterim = "";
+  let streamingFallbackTimer = null;
   const voiceProvider = getVoiceProvider();
 
   console.log(`[twilio] New connection agentId=${agentId} voiceProvider=${voiceProvider}`);
@@ -147,17 +149,38 @@ export function handleCall(ws, req) {
       provider: voiceProvider,
       languageCode: agent.language ?? lang,
       onInterimTranscript: (text) => {
+        latestStreamingInterim = text?.trim() ?? "";
         console.log(`[twilio/stt/interim] "${text.slice(0, 80)}"`);
       },
       onFinalTranscript: async (text) => {
         const transcript = text?.trim();
         if (!transcript || isProcessing || !agent) return;
+        latestStreamingInterim = "";
+        if (streamingFallbackTimer) clearTimeout(streamingFallbackTimer);
+        streamingFallbackTimer = null;
         console.log(`[twilio/stt/final] "${transcript}"`);
         await runReplyPipeline(transcript);
       },
-      onError: (err) => console.error("[twilio/stt/stream] ERROR:", err?.message),
+      onError: (err) => {
+        console.error("[twilio/stt/stream] ERROR:", err?.message);
+        streamingStt?.close();
+        streamingStt = null;
+      },
     });
     console.log(`[twilio] streaming pipeline enabled provider=${voiceProvider}`);
+  }
+
+  async function ensureStreamingStt() {
+    if (!STREAMING_PIPELINE || !agent) return null;
+    if (!streamingStt || streamingStt.isClosed?.()) {
+      streamingStt = null;
+      try {
+        await initStreamingPipeline();
+      } catch (err) {
+        console.error("[twilio/stt/stream] recreate failed:", err?.message);
+      }
+    }
+    return streamingStt;
   }
 
   // ── Send audio to Twilio ────────────────────────────────────────────────────
@@ -234,6 +257,15 @@ export function handleCall(ws, req) {
 
     if (STREAMING_PIPELINE && streamingStt) {
       streamingStt.flush();
+      const fallbackTranscript = latestStreamingInterim;
+      if (streamingFallbackTimer) clearTimeout(streamingFallbackTimer);
+      streamingFallbackTimer = setTimeout(async () => {
+        const transcript = fallbackTranscript?.trim();
+        if (!transcript || isProcessing || !agent) return;
+        latestStreamingInterim = "";
+        console.warn(`[twilio/stt/fallback] using interim "${transcript.slice(0, 80)}"`);
+        await runReplyPipeline(transcript);
+      }, 350);
       pcmChunks = [];
       sttChunks = [];
       utteranceMs = 0;
@@ -332,11 +364,14 @@ export function handleCall(ws, req) {
               onMulawAudio: (mulawBuf) => {
                 if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
                 sentAnyAudio = true;
+                console.log(`[twilio/tts/stream] audio bytes=${mulawBuf.length}`);
                 sendMulawAudio(mulawBuf);
               },
+              onDone: () => console.log("[twilio/tts/stream] done"),
               onError: (err) => console.error("[twilio/tts/stream] ERROR:", err?.message),
             })
           : null;
+        if (ttsStream) console.log(`[twilio/tts/stream] started provider=${voiceProvider}`);
       } catch (err) {
         console.warn("[twilio/tts/stream] unavailable, using chunked batch:", err?.message);
       }
@@ -352,6 +387,7 @@ export function handleCall(ws, req) {
         sentAnyAudio = true;
         ttsQueue = ttsQueue.then(async () => {
           if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          console.log(`[twilio/tts/batch] chunk chars=${chunkText.length}`);
           const mulawBuf = await tts({
             text: chunkText,
             languageCode: agent.language ?? lang,
@@ -400,6 +436,7 @@ export function handleCall(ws, req) {
           config: agent.config,
         });
         if (!reply?.trim()) throw new Error("LLM returned an empty reply");
+        console.log(`[twilio/tts/batch] fallback full chars=${reply.length}`);
         const mulawBuf = await tts({
           text: reply,
           languageCode: agent.language ?? lang,
@@ -641,6 +678,7 @@ export function handleCall(ws, req) {
         const pcm8k    = decodeMulaw(mulawBuf);
         const pcm16k   = upsample8kTo16k(pcm8k);
         const rms = getRMS(pcm16k);
+        let sentToStreamingStt = false;
 
         // Barge-in: caller speech should immediately stop bot playback.
         if (isBotSpeaking) {
@@ -652,8 +690,9 @@ export function handleCall(ws, req) {
             utteranceMs = 0;
             silenceMs = 0;
             isSpeaking = true;
-            if (STREAMING_PIPELINE && streamingStt) {
-              streamingStt.sendTwilioMulaw(mulawBuf);
+            if (STREAMING_PIPELINE) {
+              const sttStream = await ensureStreamingStt();
+              sttStream?.sendTwilioMulaw(mulawBuf);
               utteranceMs += TWILIO_FRAME_MS;
             } else {
               appendSpeechFrame(mulawBuf, pcm16k);
@@ -666,7 +705,12 @@ export function handleCall(ws, req) {
         // Drop frames while the pipeline is busy producing the next answer.
         if (isProcessing) break;
 
-        if (STREAMING_PIPELINE && streamingStt) {
+        if (STREAMING_PIPELINE) {
+          const sttStream = await ensureStreamingStt();
+          if (sttStream) {
+            sentToStreamingStt = sttStream.sendTwilioMulaw(mulawBuf) !== false;
+          }
+
           if (rms > VAD_SILENCE_THRESHOLD) {
             if (!isSpeaking) {
               isSpeaking = true;
@@ -675,18 +719,17 @@ export function handleCall(ws, req) {
             }
             silenceMs = 0;
             utteranceMs += TWILIO_FRAME_MS;
-            streamingStt.sendTwilioMulaw(mulawBuf);
             armVadTimer();
           } else if (isSpeaking) {
             utteranceMs += TWILIO_FRAME_MS;
             silenceMs += TWILIO_FRAME_MS;
-            streamingStt.sendTwilioMulaw(mulawBuf);
             if (silenceMs >= VAD_SILENCE_DURATION) {
               await finishUtterance(`silence-${silenceMs}ms`);
             } else {
               armVadTimer();
             }
           }
+          if (!sentToStreamingStt) console.warn("[twilio/stt/stream] frame not sent");
           break;
         }
 

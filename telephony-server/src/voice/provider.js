@@ -23,6 +23,45 @@ const SARVAM_BASE_URL =
 const SARVAM_TIMEOUT_MS = parseInt(
   process.env.SARVAM_API_TIMEOUT_MS ?? "15000",
 );
+const SARVAM_SPEAKERS = new Set([
+  "ritu",
+  "priya",
+  "neha",
+  "pooja",
+  "simran",
+  "kavya",
+  "ishita",
+  "shreya",
+  "roopa",
+  "tanya",
+  "shruti",
+  "suhani",
+  "kavitha",
+  "rupali",
+  "shubh",
+  "aditya",
+  "rahul",
+  "rohan",
+  "amit",
+  "dev",
+  "ratan",
+  "varun",
+  "manan",
+  "sumit",
+  "kabir",
+  "aayan",
+  "ashutosh",
+  "advait",
+  "anand",
+  "tarun",
+  "sunny",
+  "mani",
+  "gokul",
+  "vijay",
+  "mohit",
+  "rehan",
+  "soham",
+]);
 
 // Google
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -44,6 +83,7 @@ async function sarvamTTS({
   speaker = "anand",
   pace = 1.0,
   speechSampleRate = 16000,
+  outputAudioCodec,
 }) {
   if (!text?.trim()) throw new Error("TTS: text is required");
   if (!languageCode) throw new Error("TTS: languageCode is required");
@@ -57,12 +97,30 @@ async function sarvamTTS({
     model: "bulbul:v3",
     temperature: 0.6,
   };
+  if (outputAudioCodec) payload.output_audio_codec = outputAudioCodec;
 
-  const response = await sarvamAxios.post("/text-to-speech", payload);
+  let response;
+  try {
+    response = await sarvamAxios.post("/text-to-speech", payload);
+  } catch (err) {
+    console.error("[sarvamTTS] failed:", err?.response?.data ?? err?.message);
+    throw err;
+  }
   const data = response.data;
 
   if (!data?.audios?.[0]) throw new Error("TTS: empty audios array");
   return Buffer.from(data.audios[0], "base64");
+}
+
+function resolveSarvamSpeaker(voiceId) {
+  const fallback = process.env.SARVAM_DEFAULT_VOICE ?? "anand";
+  if (voiceId && SARVAM_SPEAKERS.has(voiceId)) return voiceId;
+  if (voiceId) {
+    console.warn(
+      `[sarvamTTS] invalid speaker "${voiceId}", using "${fallback}"`,
+    );
+  }
+  return fallback;
 }
 
 // ── Sarvam STT ────────────────────────────────────────────────────────────────
@@ -298,9 +356,10 @@ export async function tts({
   return sarvamTTS({
     text,
     languageCode,
-    speaker: voiceId ?? process.env.SARVAM_DEFAULT_VOICE ?? "anand",
+    speaker: resolveSarvamSpeaker(voiceId),
     pace,
     speechSampleRate: sampleRate,
+    outputAudioCodec: audioEncoding === "MULAW" ? "mulaw" : undefined,
   });
 }
 

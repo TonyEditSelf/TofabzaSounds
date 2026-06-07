@@ -85,6 +85,7 @@ export async function createStreamingStt({
   if (provider === "google") {
     const speech = await import("@google-cloud/speech");
     const client = new speech.SpeechClient({ credentials: googleCredentials() });
+    let closed = false;
     const stream = client
       .streamingRecognize({
         config: {
@@ -97,7 +98,13 @@ export async function createStreamingStt({
         interimResults: true,
         singleUtterance: false,
       })
-      .on("error", (err) => onError?.(err))
+      .on("error", (err) => {
+        closed = true;
+        onError?.(err);
+      })
+      .on("close", () => {
+        closed = true;
+      })
       .on("data", (data) => {
         const result = data.results?.[0];
         const transcript = result?.alternatives?.[0]?.transcript ?? "";
@@ -107,9 +114,22 @@ export async function createStreamingStt({
       });
 
     return {
-      sendTwilioMulaw: (mulawBuf) => stream.write(mulawBuf),
+      sendTwilioMulaw: (mulawBuf) => {
+        if (closed || stream.destroyed || !stream.writable) return false;
+        try {
+          return stream.write(mulawBuf);
+        } catch (err) {
+          closed = true;
+          onError?.(err);
+          return false;
+        }
+      },
       flush: () => {},
-      close: () => stream.destroy(),
+      isClosed: () => closed || stream.destroyed || !stream.writable,
+      close: () => {
+        closed = true;
+        stream.destroy();
+      },
     };
   }
 
