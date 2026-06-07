@@ -22,6 +22,14 @@ function toWebSocketBase(rawUrl) {
   return `wss://${trimmed}`;
 }
 
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export async function POST(req, { params }) {
   const { agent_id } = await params;
 
@@ -61,6 +69,7 @@ export async function POST(req, { params }) {
   } catch (_) {}
 
   const callSid = rawBody.CallSid || "";
+  const from = rawBody.From || "";
 
   logger.inboundWebhook({
     callSid,
@@ -77,9 +86,10 @@ export async function POST(req, { params }) {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-  <Stream url="${streamUrl.replace(/&/g, "&amp;")}">
-      <Parameter name="agent_id" value="${agent_id}" />
-      <Parameter name="call_sid" value="${callSid}" />
+  <Stream url="${escapeXml(streamUrl)}">
+      <Parameter name="agent_id" value="${escapeXml(agent_id)}" />
+      <Parameter name="call_sid" value="${escapeXml(callSid)}" />
+      <Parameter name="from" value="${escapeXml(from)}" />
     </Stream>
   </Connect>
 </Response>`;

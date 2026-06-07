@@ -51,6 +51,14 @@ function sanitisePrompt(prompt = "") {
   return prompt.replace(/<\|.*?\|>/g, "").slice(0, 8000);
 }
 
+function buildRagQuery(history = []) {
+  return history
+    .slice(-5)
+    .map((m) => `${m.role === "assistant" ? "Assistant" : "Caller"}: ${m.content}`)
+    .join("\n")
+    .slice(-1200);
+}
+
 async function fetchRagContext(agentId, query) {
   if (!RAG_URL || !INTERNAL_SECRET) return "";
   try {
@@ -87,7 +95,7 @@ async function fetchRagContext(agentId, query) {
 
 async function buildGeminiPayload({ agentId, history, language, config }) {
   const lastMessage = history[history.length - 1]?.content ?? "";
-  const ragContext = await fetchRagContext(agentId, lastMessage);
+  const ragContext = await fetchRagContext(agentId, buildRagQuery(history) || lastMessage);
 
   const langNames = {
     "ml-IN": "Malayalam",

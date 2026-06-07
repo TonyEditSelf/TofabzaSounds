@@ -75,6 +75,14 @@ function openWs(url, headers = {}) {
   });
 }
 
+function resolveGoogleStreamingVoice(languageCode, voiceId) {
+  if (voiceId?.includes("-Chirp3-HD-")) return voiceId;
+  if (process.env.GOOGLE_STREAMING_VOICE?.includes("-Chirp3-HD-")) {
+    return process.env.GOOGLE_STREAMING_VOICE;
+  }
+  return `${languageCode}-Chirp3-HD-Achernar`;
+}
+
 export async function createStreamingStt({
   provider,
   languageCode,
@@ -115,9 +123,10 @@ export async function createStreamingStt({
 
     return {
       sendTwilioMulaw: (mulawBuf) => {
-        if (closed || stream.destroyed || !stream.writable) return false;
+        if (closed || stream.destroyed) return false;
         try {
-          return stream.write(mulawBuf);
+          stream.write(mulawBuf);
+          return true;
         } catch (err) {
           closed = true;
           onError?.(err);
@@ -125,7 +134,7 @@ export async function createStreamingStt({
         }
       },
       flush: () => {},
-      isClosed: () => closed || stream.destroyed || !stream.writable,
+      isClosed: () => closed || stream.destroyed,
       close: () => {
         closed = true;
         stream.destroy();
@@ -162,22 +171,16 @@ export async function createStreamingStt({
 
     return {
       sendTwilioMulaw: (mulawBuf) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-        socket.send(
-          JSON.stringify({
-            audio: {
-              data: decodeMulaw(mulawBuf).toString("base64"),
-              sample_rate: 8000,
-              encoding: "pcm_s16le",
-            },
-          }),
-        );
+        if (socket.readyState !== WebSocket.OPEN) return false;
+        socket.send(decodeMulaw(mulawBuf));
+        return true;
       },
       flush: () => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "flush" }));
         }
       },
+      isClosed: () => socket.readyState !== WebSocket.OPEN,
       close: () => socket.close(),
     };
   }
@@ -200,29 +203,58 @@ export async function createStreamingTts({
       credentials: googleCredentials(),
     });
     const stream = await client.streamingSynthesize();
+    let closed = false;
     stream.on("data", (data) => {
       if (data.audioContent?.length) {
         onMulawAudio?.(linear16ToMulaw(Buffer.from(data.audioContent), 24000));
       }
     });
-    stream.on("end", () => onDone?.());
-    stream.on("error", (err) => onError?.(err));
+    stream.on("end", () => {
+      closed = true;
+      onDone?.();
+    });
+    stream.on("close", () => {
+      closed = true;
+    });
+    stream.on("error", (err) => {
+      closed = true;
+      onError?.(err);
+    });
+    const streamingVoice = resolveGoogleStreamingVoice(languageCode, voiceId);
+    console.log(`[google/tts/stream] voice=${streamingVoice}`);
     stream.write({
       streamingConfig: {
         voice: {
           languageCode,
-          name: voiceId ?? process.env.GOOGLE_STREAMING_VOICE ?? "ml-IN-Chirp3-HD-Aoede",
+          name: streamingVoice,
         },
         streamingAudioConfig: {
-          audioEncoding: "LINEAR16",
+          audioEncoding: "PCM",
+          sampleRateHertz: 24000,
         },
       },
     });
 
     return {
-      sendText: (text) => stream.write({ input: { text } }),
-      flush: () => stream.end(),
-      close: () => stream.destroy(),
+      sendText: (text) => {
+        if (closed || stream.destroyed) return false;
+        try {
+          stream.write({ input: { text } });
+          return true;
+        } catch (err) {
+          closed = true;
+          onError?.(err);
+          return false;
+        }
+      },
+      flush: () => {
+        if (!closed && !stream.destroyed) stream.end();
+      },
+      isClosed: () => closed || stream.destroyed,
+      close: () => {
+        closed = true;
+        stream.destroy();
+      },
     };
   }
 
@@ -265,15 +297,16 @@ export async function createStreamingTts({
 
     return {
       sendText: (text) => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "text", data: { text } }));
-        }
+        if (socket.readyState !== WebSocket.OPEN) return false;
+        socket.send(JSON.stringify({ type: "text", data: { text } }));
+        return true;
       },
       flush: () => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "flush" }));
         }
       },
+      isClosed: () => socket.readyState !== WebSocket.OPEN,
       close: () => socket.close(),
     };
   }
