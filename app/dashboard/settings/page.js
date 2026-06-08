@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 
 const fetcher = (url) => fetch(url).then((r) => r.json());
@@ -23,21 +23,22 @@ const GEMINI_CHAT_MODELS = [
   "gemini-2.0-flash",
 ];
 const GEMINI_EMBEDDING_MODELS = [
+  "gemini-embedding-001",
   "text-embedding-004",
   "text-multilingual-embedding-002",
 ];
 
 export default function SettingsPage() {
-  const { data, isLoading, mutate } = useSWR("/api/settings", fetcher);
   const [form, setForm] = useState({});
   const [revealed, setRevealed] = useState({});
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (data?.settings) setForm(data.settings);
-  }, [data]);
+  const { data, isLoading, mutate } = useSWR("/api/settings", fetcher, {
+    onSuccess: (next) => {
+      if (next?.settings) setForm(next.settings);
+    },
+  });
 
   function set(key, value) {
     setForm((f) => ({ ...f, [key]: value }));

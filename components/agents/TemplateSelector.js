@@ -21,7 +21,6 @@
  *       config: {
  *         ...prev.config,
  *         prompt: template.system_prompt,
- *         greeting: template.greeting,
  *         templateSlug: template.slug,
  *         templateVariables: template.variables,
  *       }
@@ -275,23 +274,20 @@ export function TemplateVariableFields({
 /**
  * applyVariables(template, variableValues)
  * ─────────────────────────────────────────
- * Replaces {{variable}} placeholders in the system prompt
- * and greeting with actual values. Call this before saving.
+ * Replaces {{variable}} placeholders in the system prompt.
  *
- * Returns { system_prompt, greeting } with variables filled in.
+ * Returns { system_prompt } with variables filled in.
  */
 export function applyVariables(template, variableValues = {}) {
   let prompt = template.system_prompt;
-  let greeting = template.greeting;
 
   Object.entries(variableValues).forEach(([key, value]) => {
     const regex = new RegExp(`\\{\\{${key}\\}\\}`, "g");
     const filled = value || `[${key}]`; // leave placeholder if empty
     prompt = prompt.replace(regex, filled);
-    greeting = greeting.replace(regex, filled);
   });
 
-  return { system_prompt: prompt, greeting };
+  return { system_prompt: prompt };
 }
 
 // ── Main TemplateSelector component ──────────────────────────

@@ -41,7 +41,6 @@ const HARDCODED_FORMS = {
   polyclinic: {
     name: "Polyclinic",
     icon: "🏥",
-    greeting: "",
     system_prompt: "",
     variables: [
       {
@@ -129,7 +128,6 @@ const HARDCODED_FORMS = {
   diagnostic: {
     name: "Diagnostic Centre",
     icon: "🔬",
-    greeting: "",
     system_prompt: "",
     variables: [
       {
@@ -217,7 +215,6 @@ const HARDCODED_FORMS = {
   dental: {
     name: "Dental Clinic",
     icon: "🦷",
-    greeting: "",
     system_prompt: "",
     variables: [
       {
@@ -305,7 +302,6 @@ const HARDCODED_FORMS = {
   hospital: {
     name: "Hospital",
     icon: "🏨",
-    greeting: "",
     system_prompt: "",
     variables: [
       {
@@ -436,7 +432,6 @@ export default function EditFacilityPage({ params }) {
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("🏢");
   const [prompt, setPrompt] = useState("");
-  const [greeting, setGreeting] = useState("");
   const [fields, setFields] = useState([makeField()]);
 
   useEffect(() => {
@@ -444,7 +439,6 @@ export default function EditFacilityPage({ params }) {
       setName(template.name ?? "");
       setIcon(template.icon ?? "🏢");
       setPrompt(template.system_prompt ?? "");
-      setGreeting(template.greeting ?? "");
       setFields(
         template.variables?.length
           ? template.variables.map(normalizeField)
@@ -502,7 +496,6 @@ export default function EditFacilityPage({ params }) {
         icon: icon.trim() || "🏢",
         category: "healthcare",
         system_prompt: prompt.trim(),
-        greeting: greeting.trim(),
         variables: validFields,
       },
       { onConflict: "slug" },
@@ -607,15 +600,6 @@ export default function EditFacilityPage({ params }) {
           Use {`{{variable_key}}`} syntax matching field keys below.
         </p>
         <div style={s.field}>
-          <label style={s.label}>Greeting</label>
-          <input
-            value={greeting}
-            onChange={(e) => setGreeting(e.target.value)}
-            placeholder="Hello, welcome to {{clinic_name}}…"
-            style={s.input}
-          />
-        </div>
-        <div style={{ ...s.field, marginTop: 12 }}>
           <label style={s.label}>
             System Prompt *
             <span style={{ float: "right", fontWeight: 400 }}>

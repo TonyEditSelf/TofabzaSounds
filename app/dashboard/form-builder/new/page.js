@@ -34,7 +34,6 @@ export default function NewFacilityPage() {
   const [slug, setSlug] = useState("");
   const [icon, setIcon] = useState("🏢");
   const [prompt, setPrompt] = useState("");
-  const [greeting, setGreeting] = useState("");
   const [fields, setFields] = useState([makeField()]);
 
   function handleNameChange(val) {
@@ -96,7 +95,6 @@ export default function NewFacilityPage() {
       icon: icon.trim() || "🏢",
       category: "healthcare",
       system_prompt: prompt.trim(),
-      greeting: greeting.trim(),
       variables: validFields,
     });
     setSaving(false);
@@ -188,15 +186,6 @@ export default function NewFacilityPage() {
           exactly.
         </p>
         <div style={s.field}>
-          <label style={s.label}>Greeting</label>
-          <input
-            value={greeting}
-            onChange={(e) => setGreeting(e.target.value)}
-            placeholder="Hello, welcome to {{clinic_name}}…"
-            style={s.input}
-          />
-        </div>
-        <div style={{ ...s.field, marginTop: 12 }}>
           <label style={s.label}>
             System Prompt *
             <span style={{ float: "right", fontWeight: 400 }}>

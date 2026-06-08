@@ -12,7 +12,13 @@
 
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { stt, tts } from "../voice/provider.js";
+import {
+  getVoiceProvider,
+  normalizeLanguageCode,
+  resolveVoiceId,
+  stt,
+  tts,
+} from "../voice/provider.js";
 import { getLLMReply } from "../pipeline/llm.js";
 import { stripWavHeader, chunkPcm } from "../lib/audio.js";
 import { createCallLog, updateCallLog } from "../lib/callLog.js";
@@ -132,6 +138,7 @@ export function handleCall(ws, req) {
 
     try {
       if (isBotSpeaking) sendClear();
+      const voiceProvider = getVoiceProvider(agent.config);
 
       // Thinking chime after PIPELINE_TIMEOUT_MS
       const chimeTimer = setTimeout(
@@ -140,10 +147,13 @@ export function handleCall(ws, req) {
       );
 
       // 1. STT
+      const activeLang = normalizeLanguageCode(agent.language ?? lang);
       const transcript = await stt({
         audioBuffer: pcmBuffer,
-        languageCode: agent.language ?? lang,
+        languageCode: activeLang,
         mimeType: "audio/wav",
+        agentConfig: agent.config,
+        voiceProvider,
       });
       clearTimeout(chimeTimer);
 
@@ -159,7 +169,7 @@ export function handleCall(ws, req) {
       const reply = await getLLMReply({
         agentId: agent.id,
         history,
-        language: agent.language ?? lang,
+        language: activeLang,
         config: agent.config,
       });
 
@@ -175,9 +185,15 @@ export function handleCall(ws, req) {
       // 3. TTS
       const wav = await tts({
         text: reply,
-        languageCode: agent.language ?? lang,
-        voiceId: agent.config?.voice_id ?? "anand",
+        languageCode: activeLang,
+        voiceId: resolveVoiceId({
+          languageCode: activeLang,
+          agentConfig: agent.config,
+          voiceProvider,
+        }),
         pace: agent.config?.pace ?? 1.0,
+        agentConfig: agent.config,
+        voiceProvider,
       });
 
       sendAudio(stripWavHeader(wav));
@@ -187,10 +203,18 @@ export function handleCall(ws, req) {
       try {
         const msg =
           agent?.config?.fallback_message ?? "I am sorry, please try again.";
+        const activeLang = normalizeLanguageCode(agent?.language ?? lang);
+        const voiceProvider = getVoiceProvider(agent?.config);
         const wav = await tts({
           text: msg,
-          languageCode: agent?.language ?? lang,
-          voiceId: "anand",
+          languageCode: activeLang,
+          voiceId: resolveVoiceId({
+            languageCode: activeLang,
+            agentConfig: agent?.config,
+            voiceProvider,
+          }),
+          agentConfig: agent?.config,
+          voiceProvider,
         });
         sendAudio(stripWavHeader(wav));
       } catch (_) {}
@@ -204,18 +228,43 @@ export function handleCall(ws, req) {
     sendAudio(silence);
   }
 
-  async function playGreeting() {
-    const greeting = agent?.config?.greeting;
-    if (!greeting) return;
+  async function playInitialReply() {
+    if (isProcessing || !agent) return;
+    isProcessing = true;
+    const activeLang = normalizeLanguageCode(agent.language ?? lang);
+    const voiceProvider = getVoiceProvider(agent.config);
+    const activeVoiceId = resolveVoiceId({
+      languageCode: activeLang,
+      agentConfig: agent.config,
+      voiceProvider,
+    });
+    console.log(
+      `[voice] provider=${voiceProvider} language=${activeLang} voice=${activeVoiceId} initial=true`,
+    );
+
     try {
-      const wav = await tts({
-        text: greeting,
-        languageCode: agent.language ?? lang,
-        voiceId: agent.config?.voice_id ?? "anand",
+      const reply = await getLLMReply({
+        agentId: agent.id,
+        history,
+        language: activeLang,
+        config: agent.config,
+        initialTurn: true,
       });
+      if (!reply?.trim()) return;
+      const wav = await tts({
+        text: reply,
+        languageCode: activeLang,
+        voiceId: activeVoiceId,
+        pace: agent.config?.pace ?? 1.0,
+        agentConfig: agent.config,
+        voiceProvider,
+      });
+      history.push({ role: "assistant", content: reply });
       sendAudio(stripWavHeader(wav));
     } catch (err) {
-      console.error("[greeting]", err?.message);
+      console.error("[initial]", err?.message);
+    } finally {
+      isProcessing = false;
     }
   }
 
@@ -252,7 +301,7 @@ export function handleCall(ws, req) {
           () => ws.close(1000, "max_duration"),
           MAX_CALL_DURATION_MS,
         );
-        await playGreeting();
+        await playInitialReply();
         break;
 
       case "media": {

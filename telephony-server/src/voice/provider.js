@@ -14,7 +14,11 @@ import crypto from "crypto";
 
 // ── Config from env ───────────────────────────────────────────────────────────
 
-const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "sarvam").toLowerCase();
+const PLATFORM_VOICE_PROVIDER = normalizeVoiceProvider(process.env.VOICE_PROVIDER);
+
+export function normalizeVoiceProvider(provider) {
+  return provider === "google" ? "google" : "sarvam";
+}
 
 // Sarvam
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
@@ -62,6 +66,88 @@ const SARVAM_SPEAKERS = new Set([
   "rehan",
   "soham",
 ]);
+const SARVAM_DEFAULT_VOICE = SARVAM_SPEAKERS.has(
+  process.env.SARVAM_DEFAULT_VOICE,
+)
+  ? process.env.SARVAM_DEFAULT_VOICE
+  : "shubh";
+
+const LANGUAGE_CODES = [
+  "ml-IN",
+  "hi-IN",
+  "ta-IN",
+  "te-IN",
+  "kn-IN",
+  "bn-IN",
+  "gu-IN",
+  "mr-IN",
+  "pa-IN",
+  "od-IN",
+  "en-IN",
+];
+const LANGUAGE_CODE_MAP = new Map(
+  LANGUAGE_CODES.map((code) => [code.toLowerCase(), code]),
+);
+const GOOGLE_VOICES_BY_LANGUAGE = {
+  "ml-IN": [
+    "ml-IN-Wavenet-A",
+    "ml-IN-Wavenet-B",
+    "ml-IN-Wavenet-C",
+    "ml-IN-Wavenet-D",
+  ],
+  "hi-IN": [
+    "hi-IN-Wavenet-A",
+    "hi-IN-Wavenet-B",
+    "hi-IN-Wavenet-C",
+    "hi-IN-Wavenet-D",
+    "hi-IN-Neural2-A",
+    "hi-IN-Neural2-B",
+    "hi-IN-Neural2-C",
+    "hi-IN-Neural2-D",
+  ],
+  "en-IN": [
+    "en-IN-Wavenet-A",
+    "en-IN-Wavenet-B",
+    "en-IN-Wavenet-C",
+    "en-IN-Wavenet-D",
+    "en-IN-Neural2-A",
+    "en-IN-Neural2-B",
+    "en-IN-Neural2-C",
+    "en-IN-Neural2-D",
+  ],
+  "ta-IN": [
+    "ta-IN-Wavenet-A",
+    "ta-IN-Wavenet-B",
+    "ta-IN-Wavenet-C",
+    "ta-IN-Wavenet-D",
+  ],
+  "te-IN": ["te-IN-Standard-A", "te-IN-Standard-B"],
+  "kn-IN": [
+    "kn-IN-Wavenet-A",
+    "kn-IN-Wavenet-B",
+    "kn-IN-Wavenet-C",
+    "kn-IN-Wavenet-D",
+  ],
+  "bn-IN": ["bn-IN-Wavenet-A", "bn-IN-Wavenet-B"],
+  "gu-IN": [
+    "gu-IN-Wavenet-A",
+    "gu-IN-Wavenet-B",
+    "gu-IN-Wavenet-C",
+    "gu-IN-Wavenet-D",
+  ],
+  "mr-IN": ["mr-IN-Wavenet-A", "mr-IN-Wavenet-B", "mr-IN-Wavenet-C"],
+};
+const GOOGLE_DEFAULT_VOICE_BY_LANGUAGE = {
+  "ml-IN": "ml-IN-Wavenet-B",
+  "hi-IN": "hi-IN-Wavenet-B",
+  "en-IN": "en-IN-Wavenet-B",
+  "ta-IN": "ta-IN-Wavenet-B",
+  "te-IN": "te-IN-Standard-B",
+  "kn-IN": "kn-IN-Wavenet-B",
+  "bn-IN": "bn-IN-Wavenet-B",
+  "gu-IN": "gu-IN-Wavenet-B",
+  "mr-IN": "mr-IN-Wavenet-B",
+};
 
 // Google
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -113,9 +199,62 @@ async function sarvamTTS({
   return Buffer.from(data.audios[0], "base64");
 }
 
+export function normalizeLanguageCode(languageCode = "ml-IN") {
+  return (
+    LANGUAGE_CODE_MAP.get(String(languageCode).toLowerCase()) ??
+    languageCode ??
+    "ml-IN"
+  );
+}
+
+function isGoogleVoiceAvailable(voiceId, languageCode) {
+  return GOOGLE_VOICES_BY_LANGUAGE[languageCode]?.includes(voiceId) ?? false;
+}
+
+function resolveGoogleVoice(voiceId, languageCode) {
+  if (isGoogleVoiceAvailable(voiceId, languageCode)) return voiceId;
+  if (voiceId) {
+    console.warn(
+      `[googleTTS] unavailable voice "${voiceId}" for ${languageCode}; using fallback`,
+    );
+  }
+  const envVoice = process.env.GOOGLE_DEFAULT_VOICE;
+  if (isGoogleVoiceAvailable(envVoice, languageCode)) return envVoice;
+  return (
+    GOOGLE_DEFAULT_VOICE_BY_LANGUAGE[languageCode] ??
+    GOOGLE_VOICES_BY_LANGUAGE[languageCode]?.[0]
+  );
+}
+
 function resolveSarvamSpeaker(voiceId) {
   if (voiceId && SARVAM_SPEAKERS.has(voiceId)) return voiceId;
-  return voiceId;
+  if (voiceId) {
+    console.warn(`[sarvamTTS] unavailable voice "${voiceId}"; using fallback`);
+  }
+  return SARVAM_DEFAULT_VOICE;
+}
+
+export function resolveVoiceId({
+  languageCode,
+  voiceId,
+  agentConfig,
+  voiceProvider,
+} = {}) {
+  const language = normalizeLanguageCode(languageCode);
+  const provider = normalizeVoiceProvider(
+    voiceProvider ?? getVoiceProvider(agentConfig),
+  );
+  const voicesByLanguage = agentConfig?.voice_ids_by_language ?? {};
+  const configuredVoice =
+    voicesByLanguage[language] ??
+    voicesByLanguage[languageCode] ??
+    voiceId ??
+    agentConfig?.voice_id;
+
+  if (provider === "google") {
+    return resolveGoogleVoice(configuredVoice, language);
+  }
+  return resolveSarvamSpeaker(configuredVoice);
 }
 
 // ── Sarvam STT ────────────────────────────────────────────────────────────────
@@ -339,14 +478,23 @@ export async function tts({
   sampleRate = 16000,
   audioEncoding,
   agentConfig,
+  voiceProvider,
 }) {
-  const provider = VOICE_PROVIDER;
-  const resolvedVoice = agentConfig?.voice_id ?? voiceId;
+  const provider = normalizeVoiceProvider(
+    voiceProvider ?? getVoiceProvider(agentConfig),
+  );
+  const language = normalizeLanguageCode(languageCode);
+  const resolvedVoice = resolveVoiceId({
+    languageCode: language,
+    voiceId,
+    agentConfig,
+    voiceProvider: provider,
+  });
 
   if (provider === "google") {
     return googleTTS({
       text,
-      languageCode,
+      languageCode: language,
       voiceName: resolvedVoice,
       speakingRate: pace,
       audioEncoding: audioEncoding ?? "LINEAR16",
@@ -356,7 +504,7 @@ export async function tts({
 
   return sarvamTTS({
     text,
-    languageCode,
+    languageCode: language,
     speaker: resolveSarvamSpeaker(resolvedVoice),
     pace,
     speechSampleRate: sampleRate,
@@ -371,22 +519,27 @@ export async function stt({
   encoding,
   sampleRateHertz,
   model,
+  agentConfig,
+  voiceProvider,
 }) {
-  const provider = VOICE_PROVIDER;
+  const provider = normalizeVoiceProvider(
+    voiceProvider ?? getVoiceProvider(agentConfig),
+  );
+  const language = normalizeLanguageCode(languageCode);
 
   if (provider === "google") {
     return googleSTT({
       audioBuffer,
-      languageCode,
+      languageCode: language,
       encoding,
       sampleRateHertz,
       model,
     });
   }
 
-  return sarvamSTT({ audioBuffer, languageCode, mimeType });
+  return sarvamSTT({ audioBuffer, languageCode: language, mimeType });
 }
 
-export function getVoiceProvider() {
-  return VOICE_PROVIDER;
+export function getVoiceProvider(agentConfig) {
+  return normalizeVoiceProvider(agentConfig?.voice_provider ?? PLATFORM_VOICE_PROVIDER);
 }

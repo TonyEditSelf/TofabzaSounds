@@ -52,7 +52,9 @@ function getVoicesForLanguage(provider, language) {
 function getDefaultVoiceId(provider, language) {
   const voices = getVoices(provider);
   if (provider !== "google") {
-    return voices.some((v) => v.id === "anand") ? "anand" : (voices[0]?.id ?? "");
+    return voices.some((v) => v.id === "shubh")
+      ? "shubh"
+      : (voices[0]?.id ?? "");
   }
   const languageVoices = getVoicesForLanguage(provider, language);
   return languageVoices[0]?.id ?? "";
@@ -70,14 +72,50 @@ function normalizeLanguage(provider, language) {
     : getDefaultLanguage(provider);
 }
 
+function normalizeVoiceMap(
+  provider,
+  voiceMap = {},
+  primaryLanguage,
+  legacyVoiceId,
+) {
+  const next = {};
+  getLanguageOptions(provider).forEach((language) => {
+    const voiceId =
+      voiceMap?.[language.code] ??
+      (language.code === primaryLanguage ? legacyVoiceId : null);
+    next[language.code] = isVoiceAvailableForLanguage(
+      provider,
+      voiceId,
+      language.code,
+    )
+      ? voiceId
+      : getDefaultVoiceId(provider, language.code);
+  });
+  return next;
+}
+
+function hasValidVoiceMap(provider, voiceMap = {}) {
+  return getLanguageOptions(provider).every((language) =>
+    isVoiceAvailableForLanguage(
+      provider,
+      voiceMap[language.code],
+      language.code,
+    ),
+  );
+}
+
 function normalizeFormForProvider(provider, form) {
   const language = normalizeLanguage(provider, form.language);
   return {
     ...form,
+    voice_provider: provider,
     language,
-    voice_id: isVoiceAvailableForLanguage(provider, form.voice_id, language)
-      ? form.voice_id
-      : getDefaultVoiceId(provider, language),
+    voice_ids_by_language: normalizeVoiceMap(
+      provider,
+      form.voice_ids_by_language,
+      language,
+      form.voice_id,
+    ),
   };
 }
 
@@ -86,11 +124,11 @@ function getDefaultForm(provider = VOICE_PROVIDER_FALLBACK) {
   return {
     client_id: "",
     name: "",
+    voice_provider: provider,
     language,
-    voice_id: getDefaultVoiceId(provider, language),
+    voice_ids_by_language: normalizeVoiceMap(provider, {}, language),
     llm_provider: "gemini-flash",
     prompt: "",
-    greeting: "",
     exotel_number: "",
     max_call_duration: 300,
     facility_type: "polyclinic",
@@ -100,19 +138,23 @@ function getDefaultForm(provider = VOICE_PROVIDER_FALLBACK) {
 
 function getFormFromAgent(agent, provider = VOICE_PROVIDER_FALLBACK) {
   const cfg = agent.config ?? {};
-  const language = normalizeLanguage(provider, agent.language);
-  const voice_id = isVoiceAvailableForLanguage(provider, cfg.voice_id, language)
-    ? cfg.voice_id
-    : getDefaultVoiceId(provider, language);
+  const voice_provider = normaliseVoiceProvider(cfg.voice_provider ?? provider);
+  const language = normalizeLanguage(voice_provider, agent.language);
+  const voice_ids_by_language = normalizeVoiceMap(
+    voice_provider,
+    cfg.voice_ids_by_language,
+    language,
+    cfg.voice_id,
+  );
 
   return {
     client_id: agent.client_id ?? "",
     name: agent.name ?? "",
+    voice_provider,
     language,
-    voice_id,
+    voice_ids_by_language,
     llm_provider: cfg.llm_provider ?? "gemini-flash",
     prompt: cfg.prompt ?? "",
-    greeting: cfg.greeting ?? "",
     exotel_number: cfg.exotel_number ?? "",
     max_call_duration: cfg.max_call_duration ?? 300,
     facility_type: cfg.facility_type ?? "polyclinic",
@@ -493,6 +535,7 @@ export default function AgentDetailPage({ params }) {
   const [confirmName, setConfirmName] = useState("");
   const [voiceProvider, setVoiceProvider] = useState(VOICE_PROVIDER_FALLBACK);
   const voiceProviderRef = useRef(VOICE_PROVIDER_FALLBACK);
+  const agentVoiceProviderExplicitRef = useRef(false);
   const [form, setForm] = useState(() =>
     getDefaultForm(VOICE_PROVIDER_FALLBACK),
   );
@@ -502,12 +545,18 @@ export default function AgentDetailPage({ params }) {
     isLoading,
     mutate,
   } = useSWR(`agent:${id}`, () => fetchAgent(id), {
-    onSuccess: (nextAgent) =>
-      setForm(getFormFromAgent(nextAgent, voiceProviderRef.current)),
+    onSuccess: (nextAgent) => {
+      agentVoiceProviderExplicitRef.current = !!nextAgent?.config?.voice_provider;
+      const nextForm = getFormFromAgent(nextAgent, voiceProviderRef.current);
+      voiceProviderRef.current = nextForm.voice_provider;
+      setVoiceProvider(nextForm.voice_provider);
+      setForm(nextForm);
+    },
   });
   useSWR("voice-provider", fetchVoiceProvider, {
     revalidateOnFocus: false,
     onSuccess: (provider) => {
+      if (agentVoiceProviderExplicitRef.current) return;
       voiceProviderRef.current = provider;
       setVoiceProvider(provider);
       setForm((f) => normalizeFormForProvider(provider, f));
@@ -519,22 +568,41 @@ export default function AgentDetailPage({ params }) {
 
   function set(field, value) {
     setForm((f) => {
+      if (field === "voice_provider") {
+        const provider = normaliseVoiceProvider(value);
+        agentVoiceProviderExplicitRef.current = true;
+        voiceProviderRef.current = provider;
+        setVoiceProvider(provider);
+        return normalizeFormForProvider(provider, {
+          ...f,
+          voice_provider: provider,
+        });
+      }
       if (field === "language") {
-        const language = normalizeLanguage(voiceProvider, value);
+        const provider = normaliseVoiceProvider(f.voice_provider ?? voiceProvider);
+        const language = normalizeLanguage(provider, value);
         return {
           ...f,
           language,
-          voice_id: isVoiceAvailableForLanguage(
-            voiceProvider,
-            f.voice_id,
+          voice_ids_by_language: normalizeVoiceMap(
+            provider,
+            f.voice_ids_by_language,
             language,
-          )
-            ? f.voice_id
-            : getDefaultVoiceId(voiceProvider, language),
+          ),
         };
       }
       return { ...f, [field]: value };
     });
+  }
+
+  function setLanguageVoice(language, voiceId) {
+    setForm((f) => ({
+      ...f,
+      voice_ids_by_language: {
+        ...f.voice_ids_by_language,
+        [language]: voiceId,
+      },
+    }));
   }
 
   async function handleSave() {
@@ -550,11 +618,26 @@ export default function AgentDetailPage({ params }) {
       toast.error("System prompt must be under 8000 characters.");
       return;
     }
-    if (!isVoiceAvailableForLanguage(voiceProvider, form.voice_id, form.language)) {
-      toast.error("Select a voice available for the chosen language.");
+    const selectedVoiceProvider = normaliseVoiceProvider(
+      form.voice_provider ?? voiceProvider,
+    );
+    const voice_ids_by_language = normalizeVoiceMap(
+      selectedVoiceProvider,
+      form.voice_ids_by_language,
+      form.language,
+    );
+    if (!hasValidVoiceMap(selectedVoiceProvider, voice_ids_by_language)) {
+      toast.error("Select a valid voice for every language.");
       return;
     }
-    const isComplete = !!(form.prompt.trim() && form.language && form.voice_id);
+    const isComplete = !!(
+      form.prompt.trim() &&
+      form.language &&
+      voice_ids_by_language[form.language]
+    );
+    const existingConfig = { ...(agent?.config ?? {}) };
+    delete existingConfig.greeting;
+    delete existingConfig.voice_id;
     setSaving(true);
     const { error } = await supabase
       .from("agents")
@@ -564,10 +647,11 @@ export default function AgentDetailPage({ params }) {
         language: form.language,
         status: isComplete ? "active" : "inactive",
         config: {
-          voice_id: form.voice_id,
+          ...existingConfig,
+          voice_provider: selectedVoiceProvider,
+          voice_ids_by_language,
           llm_provider: form.llm_provider,
           prompt: form.prompt.trim(),
-          greeting: form.greeting.trim(),
           exotel_number: form.exotel_number.trim(),
           max_call_duration: Number(form.max_call_duration),
           facility_type: form.facility_type,
@@ -767,36 +851,57 @@ export default function AgentDetailPage({ params }) {
               style={s.input}
             />
           </div>
-          <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
-          >
-            <div style={s.field}>
-              <label style={s.label}>Language</label>
-              <select
-                value={form.language}
-                onChange={(e) => set("language", e.target.value)}
-                style={s.select}
-              >
-                {getLanguageOptions(voiceProvider).map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={s.field}>
-              <label style={s.label}>Voice</label>
-              <select
-                value={form.voice_id}
-                onChange={(e) => set("voice_id", e.target.value)}
-                style={s.select}
-              >
-                {getVoicesForLanguage(voiceProvider, form.language).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name} ({v.gender})
-                  </option>
-                ))}
-              </select>
+          <div style={s.field}>
+            <label style={s.label}>Voice Provider</label>
+            <select
+              value={form.voice_provider ?? voiceProvider}
+              onChange={(e) => set("voice_provider", e.target.value)}
+              style={s.select}
+            >
+              <option value="sarvam">Sarvam</option>
+              <option value="google">Google</option>
+            </select>
+          </div>
+          <div style={s.field}>
+            <label style={s.label}>Primary Language</label>
+            <select
+              value={form.language}
+              onChange={(e) => set("language", e.target.value)}
+              style={s.select}
+            >
+              {getLanguageOptions(voiceProvider).map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={s.field}>
+            <label style={s.label}>Default Voices</label>
+            <div style={s.voiceGrid}>
+              {getLanguageOptions(voiceProvider).map((language) => (
+                <div key={language.code} style={s.voiceRow}>
+                  <span style={s.voiceLanguage}>{language.name}</span>
+                  <select
+                    value={
+                      form.voice_ids_by_language?.[language.code] ??
+                      getDefaultVoiceId(voiceProvider, language.code)
+                    }
+                    onChange={(e) =>
+                      setLanguageVoice(language.code, e.target.value)
+                    }
+                    style={s.select}
+                  >
+                    {getVoicesForLanguage(voiceProvider, language.code).map(
+                      (v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.gender})
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </div>
+              ))}
             </div>
           </div>
           <div style={s.field}>
@@ -845,15 +950,6 @@ export default function AgentDetailPage({ params }) {
               min={30}
               max={1800}
               style={{ ...s.input, width: 140 }}
-            />
-          </div>
-          <div style={s.field}>
-            <label style={s.label}>Greeting (first thing agent says)</label>
-            <input
-              value={form.greeting}
-              onChange={(e) => set("greeting", e.target.value)}
-              placeholder="Hello, welcome to…"
-              style={s.input}
             />
           </div>
           <div style={s.field}>
@@ -956,6 +1052,22 @@ const s = {
     minHeight: 36,
     width: "100%",
     boxSizing: "border-box",
+  },
+  voiceGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 10,
+  },
+  voiceRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(90px, 0.8fr) minmax(140px, 1.2fr)",
+    alignItems: "center",
+    gap: 8,
+  },
+  voiceLanguage: {
+    fontSize: "0.82rem",
+    color: "var(--ink-700)",
+    fontFamily: "var(--font-sans)",
   },
   select: {
     border: "1px solid var(--border)",

@@ -6,10 +6,16 @@
  */
 
 import axios from "axios";
+import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const NEXTJS_URL = process.env.NEXTJS_URL;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DIRECT_RAG =
+  (process.env.TELEPHONY_DIRECT_RAG ?? "true").toLowerCase() !== "false";
 
 const LLM_MODELS = {
   "gemini-flash": process.env.GEMINI_FLASH_MODEL ?? "gemini-2.5-flash",
@@ -26,6 +32,18 @@ const RAG_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.RAG_TIMEOUT_MS ?? "6000", 10) || 6000,
 );
+const RAG_TOP_K = Math.max(
+  1,
+  Number.parseInt(process.env.RAG_TOP_K ?? "3", 10) || 3,
+);
+const RAG_MATCH_THRESHOLD = Number.isFinite(
+  Number.parseFloat(process.env.RAG_MATCH_THRESHOLD ?? ""),
+)
+  ? Number.parseFloat(process.env.RAG_MATCH_THRESHOLD)
+  : 0.35;
+const RAG_EMBEDDING_MODEL = (
+  process.env.GEMINI_EMBEDDING_MODEL ?? "gemini-embedding-001"
+).replace(/^models\//, "");
 
 function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -33,6 +51,10 @@ function geminiUrl(model) {
 
 function geminiStreamUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+}
+
+function geminiEmbeddingUrl(model) {
+  return `https://generativelanguage.googleapis.com/v1/models/${model}:embedContent?key=${GEMINI_API_KEY}`;
 }
 
 function resolveModelCandidates(config = {}) {
@@ -64,18 +86,148 @@ function buildRagQuery(history = []) {
 }
 
 const _ragCache = new Map();
+const _embeddingCache = new Map();
 const RAG_CACHE_TTL = 30_000;
+const EMBEDDING_CACHE_TTL = 5 * 60_000;
+const CACHE_LIMIT = 200;
 
-async function fetchRagContext(agentId, query) {
-  if (!RAG_URL || !INTERNAL_SECRET) return "";
+let _supabase = null;
+function getSupabase() {
+  if (!_supabase && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    });
+  }
+  return _supabase;
+}
 
-  const cached = _ragCache.get(agentId);
+function shortHash(value) {
+  return crypto.createHash("sha1").update(value).digest("hex").slice(0, 16);
+}
+
+function setBoundedCache(cache, key, value) {
+  if (cache.size >= CACHE_LIMIT) {
+    cache.delete(cache.keys().next().value);
+  }
+  cache.set(key, value);
+}
+
+function normalizeTopK(config = {}) {
+  return Math.max(1, Number.parseInt(config?.rag_top_k ?? RAG_TOP_K, 10) || 3);
+}
+
+function formatRagContext(chunks = []) {
+  if (!chunks?.length) return "";
+  const context = chunks.map((c, i) => `[${i + 1}] ${c.content}`).join("\n\n");
+  return `\n\n--- Relevant Knowledge Base Context ---\n${context}\n--- End Context ---`;
+}
+
+async function embedRagQuery(query) {
+  const key = shortHash(query);
+  const cached = _embeddingCache.get(key);
+  if (cached && Date.now() - cached.ts < EMBEDDING_CACHE_TTL) {
+    return cached.embedding;
+  }
+
+  const res = await fetch(geminiEmbeddingUrl(RAG_EMBEDDING_MODEL), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: `models/${RAG_EMBEDDING_MODEL}`,
+      content: { parts: [{ text: query.slice(0, 8000) }] },
+    }),
+    signal: AbortSignal.timeout(RAG_TIMEOUT_MS),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message ?? "Gemini embed failed");
+  const embedding = data.embedding?.values;
+  if (!embedding?.length) throw new Error("Gemini embed returned empty vector");
+  setBoundedCache(_embeddingCache, key, { embedding, ts: Date.now() });
+  return embedding;
+}
+
+async function fetchLegacyDirectRagContext({
+  supabase,
+  agentId,
+  embedding,
+  topK,
+  threshold,
+}) {
+  const { data: kbs, error: kbError } = await supabase
+    .from("knowledge_bases")
+    .select("id")
+    .eq("owner_id", agentId)
+    .eq("owner_type", "agent");
+
+  if (kbError) throw kbError;
+  if (!kbs?.length) return "";
+
+  const { data: chunks, error } = await supabase.rpc("match_chunks", {
+    query_embedding: embedding,
+    kb_ids: kbs.map((k) => k.id),
+    match_threshold: threshold,
+    match_count: topK,
+  });
+
+  if (error) throw error;
+  return formatRagContext(chunks);
+}
+
+async function fetchDirectRagContext(agentId, query, config = {}) {
+  if (!DIRECT_RAG || !GEMINI_API_KEY) return null;
+  const supabase = getSupabase();
+  if (!supabase) return null;
+
+  const topK = normalizeTopK(config);
+  const threshold = Number.parseFloat(config?.rag_match_threshold) || RAG_MATCH_THRESHOLD;
+  const embedding = await embedRagQuery(query);
+
+  const { data: chunks, error } = await supabase.rpc("match_chunks_hybrid", {
+    query_embedding: embedding,
+    query_text: query,
+    match_owner_id: agentId,
+    match_owner_type: "agent",
+    match_count: topK,
+    match_threshold: threshold,
+  });
+
+  if (!error) return formatRagContext(chunks);
+
+  console.warn("[rag] hybrid RPC unavailable, falling back:", error.message);
+  return fetchLegacyDirectRagContext({
+    supabase,
+    agentId,
+    embedding,
+    topK,
+    threshold,
+  });
+}
+
+async function fetchRagContext(agentId, query, config = {}) {
+  const topK = normalizeTopK(config);
+  const cacheKey = `${agentId}:${topK}:${shortHash(query)}`;
+
+  const cached = _ragCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < RAG_CACHE_TTL) return cached.ctx;
+
+  try {
+    const directCtx = await fetchDirectRagContext(agentId, query, config);
+    if (directCtx !== null) {
+      setBoundedCache(_ragCache, cacheKey, { ctx: directCtx, ts: Date.now() });
+      if (directCtx) console.log(`[rag] direct context chars=${directCtx.length}`);
+      return directCtx;
+    }
+  } catch (err) {
+    console.warn("[rag] direct fetch failed:", err?.message);
+  }
+
+  if (!RAG_URL || !INTERNAL_SECRET) return "";
 
   try {
     const res = await axios.post(
       RAG_URL,
-      { query, owner_id: agentId, owner_type: "agent" },
+      { query, owner_id: agentId, owner_type: "agent", top_k: topK },
       {
         headers: {
           "Content-Type": "application/json",
@@ -85,7 +237,7 @@ async function fetchRagContext(agentId, query) {
       },
     );
     const ctx = res.data?.context ?? "";
-    _ragCache.set(agentId, { ctx, ts: Date.now() });
+    setBoundedCache(_ragCache, cacheKey, { ctx, ts: Date.now() });
     if (ctx) console.log(`[rag] fetched context chars=${ctx.length}`);
     return ctx;
   } catch (err) {
@@ -107,10 +259,24 @@ async function fetchRagContext(agentId, query) {
   }
 }
 
-async function buildGeminiPayload({ agentId, history, language, config, ragContext }) {
-  const lastMessage = history[history.length - 1]?.content ?? "";
-  if (ragContext === undefined) {
-    ragContext = await fetchRagContext(agentId, buildRagQuery(history) || lastMessage);
+async function buildGeminiPayload({
+  agentId,
+  history,
+  language,
+  config,
+  ragContext,
+  initialTurn = false,
+}) {
+  const lastMessage =
+    initialTurn || !history.length
+      ? "Begin the call now. Greet the caller according to the agent instructions."
+      : (history[history.length - 1]?.content ?? "");
+  if (!initialTurn && ragContext === undefined) {
+    ragContext = await fetchRagContext(
+      agentId,
+      buildRagQuery(history) || lastMessage,
+      config,
+    );
   }
 
   const langNames = {
@@ -189,12 +355,19 @@ async function* readGeminiSseText(stream) {
   }
 }
 
-export async function getLLMReply({ agentId, history, language, config }) {
+export async function getLLMReply({
+  agentId,
+  history,
+  language,
+  config,
+  initialTurn = false,
+}) {
   const { payload } = await buildGeminiPayload({
     agentId,
     history,
     language,
     config,
+    initialTurn,
   });
 
   for (const modelName of resolveModelCandidates(config)) {
@@ -234,12 +407,14 @@ export async function streamLLMReply({
   config,
   signal,
   onToken,
+  initialTurn = false,
 }) {
   const { payload } = await buildGeminiPayload({
     agentId,
     history,
     language,
     config,
+    initialTurn,
   });
 
   for (const modelName of resolveModelCandidates(config)) {

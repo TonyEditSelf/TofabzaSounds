@@ -75,7 +75,6 @@ export async function POST(req, { params }) {
   }
 
   let finalPrompt = agent.config?.prompt || "";
-  let finalGreeting = agent.config?.greeting || "";
 
   // If template_id exists, load raw template and substitute variables
   // Look up template by facility_type slug
@@ -83,7 +82,7 @@ export async function POST(req, { params }) {
   if (facilityType) {
     const { data: tmpl } = await admin
       .from("prompt_templates")
-      .select("system_prompt, greeting, variables")
+      .select("system_prompt, variables")
       .eq("slug", facilityType)
       .single();
 
@@ -91,14 +90,8 @@ export async function POST(req, { params }) {
       const vars = sub.form_data || {};
       finalPrompt = tmpl.system_prompt.replace(
         /\{\{(\w+)\}\}/g,
-        (_, key) => vars[key] || `[${key}]`,
-      );
-      finalGreeting = tmpl.greeting
-        ? tmpl.greeting.replace(
-            /\{\{(\w+)\}\}/g,
-            (_, key) => vars[key] || `[${key}]`,
-          )
-        : finalGreeting;
+          (_, key) => vars[key] || `[${key}]`,
+        );
     }
   } else {
     // No facility type — append form data as context block
@@ -110,10 +103,11 @@ export async function POST(req, { params }) {
   }
 
   // Apply fallback_number from form if present and not already set
+  const existingConfig = { ...(agent.config ?? {}) };
+  delete existingConfig.greeting;
   const updatedConfig = {
-    ...agent.config,
+    ...existingConfig,
     prompt: finalPrompt,
-    greeting: finalGreeting,
   };
   if (sub.form_data?.fallback_number && !agent.config?.fallback_number) {
     updatedConfig.fallback_number = sub.form_data.fallback_number;

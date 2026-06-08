@@ -25,7 +25,7 @@ export async function POST(req) {
       );
     }
 
-    const { query, owner_id, owner_type } = await req.json();
+    const { query, owner_id, owner_type, top_k, threshold } = await req.json();
 
     if (!query || !owner_id || !owner_type) {
       return Response.json(
@@ -39,7 +39,13 @@ export async function POST(req) {
       );
     }
 
-    const context = await ragQuery({ query, owner_id, owner_type });
+    const context = await ragQuery({
+      query,
+      owner_id,
+      owner_type,
+      topK: top_k,
+      threshold,
+    });
     return Response.json({ context });
   } catch (err) {
     console.error("[rag/query] route failed:", err);

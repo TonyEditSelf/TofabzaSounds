@@ -223,10 +223,10 @@ export async function proxy(req) {
     },
   );
 
-  let session;
+  let user;
   try {
-    const { data } = await supabase.auth.getSession();
-    session = data.session;
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
   } catch (err) {
     // If Supabase is unreachable, fail safe: redirect to login
     console.error("[proxy] Supabase session check failed:", err?.message);
@@ -235,7 +235,7 @@ export async function proxy(req) {
   }
 
   // No session -> redirect to login
-  if (!session) {
+  if (!user) {
     const loginUrl = new URL("/login", req.url);
     // Preserve the original destination so we can redirect back after login
     loginUrl.searchParams.set("next", pathname);
@@ -243,7 +243,7 @@ export async function proxy(req) {
   }
 
   // 7. Single-user email lock
-  if (session.user.email !== ALLOWED_EMAIL) {
+  if (user.email !== ALLOWED_EMAIL) {
     // Sign out any intruder immediately, then redirect
     try {
       await supabase.auth.signOut();

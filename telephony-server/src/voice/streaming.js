@@ -1,9 +1,15 @@
 import WebSocket from "ws";
 import speech from "@google-cloud/speech";
 import textToSpeech from "@google-cloud/text-to-speech";
+import { normalizeLanguageCode } from "./provider.js";
 
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+const SARVAM_STT_SAMPLE_RATE =
+  Number.parseInt(process.env.SARVAM_STT_SAMPLE_RATE ?? "8000", 10) || 8000;
+const SARVAM_TTS_DONE_TIMEOUT_MS =
+  Number.parseInt(process.env.SARVAM_TTS_DONE_TIMEOUT_MS ?? "3000", 10) ||
+  3000;
 
 const _parsedGoogleCredentials = (() => {
   if (!GOOGLE_SERVICE_ACCOUNT_JSON) return undefined;
@@ -21,7 +27,9 @@ function googleCredentials() {
 let _speechClient = null;
 function getSpeechClient() {
   if (!_speechClient) {
-    _speechClient = new speech.SpeechClient({ credentials: googleCredentials() });
+    _speechClient = new speech.SpeechClient({
+      credentials: googleCredentials(),
+    });
   }
   return _speechClient;
 }
@@ -29,7 +37,9 @@ function getSpeechClient() {
 let _ttsClient = null;
 function getTextToSpeechClient() {
   if (!_ttsClient) {
-    _ttsClient = new textToSpeech.v1.TextToSpeechClient({ credentials: googleCredentials() });
+    _ttsClient = new textToSpeech.v1.TextToSpeechClient({
+      credentials: googleCredentials(),
+    });
   }
   return _ttsClient;
 }
@@ -97,12 +107,25 @@ function openWs(url, headers = {}) {
   });
 }
 
-function resolveGoogleStreamingVoice(languageCode, voiceId) {
-  if (voiceId?.includes("-Chirp3-HD-")) return voiceId;
-  if (process.env.GOOGLE_STREAMING_VOICE?.includes("-Chirp3-HD-")) {
-    return process.env.GOOGLE_STREAMING_VOICE;
+function sendJson(socket, payload, onError) {
+  if (socket.readyState !== WebSocket.OPEN) return false;
+  try {
+    socket.send(JSON.stringify(payload), (err) => {
+      if (err) onError?.(err);
+    });
+    return true;
+  } catch (err) {
+    onError?.(err);
+    return false;
   }
-  return `${languageCode}-Chirp3-HD-Achernar`;
+}
+
+function resolveGoogleStreamingVoice(languageCode, voiceId) {
+  const language = normalizeLanguageCode(languageCode);
+  if (voiceId?.startsWith(`${language}-Chirp3-HD-`)) {
+    return voiceId;
+  }
+  throw new Error(`Google streaming TTS unavailable for voice "${voiceId}"`);
 }
 
 export async function createStreamingStt({
@@ -112,6 +135,7 @@ export async function createStreamingStt({
   onInterimTranscript,
   onError,
 }) {
+  const language = normalizeLanguageCode(languageCode);
   if (provider === "google") {
     const client = getSpeechClient();
     let closed = false;
@@ -120,7 +144,7 @@ export async function createStreamingStt({
         config: {
           encoding: "MULAW",
           sampleRateHertz: 8000,
-          languageCode,
+          languageCode: language,
           alternativeLanguageCodes: [
             "en-IN",
             "hi-IN",
@@ -129,7 +153,7 @@ export async function createStreamingStt({
             "kn-IN",
             "te-IN",
             "mr-IN",
-          ].filter((l) => l !== languageCode),
+          ].filter((l) => l !== language),
           enableAutomaticPunctuation: true,
           model: process.env.GOOGLE_STT_MODEL,
         },
@@ -174,12 +198,14 @@ export async function createStreamingStt({
   }
 
   if (provider === "sarvam") {
+    if (!SARVAM_API_KEY) throw new Error("SARVAM_API_KEY is not set");
     const params = new URLSearchParams({
-      "language-code": languageCode,
+      "language-code": language,
       model: process.env.SARVAM_STT_MODEL ?? "saaras:v3",
       mode: process.env.SARVAM_STT_MODE ?? "transcribe",
-      sample_rate: "8000",
+      sample_rate: String(SARVAM_STT_SAMPLE_RATE),
       input_audio_codec: "pcm_s16le",
+      high_vad_sensitivity: "true",
       vad_signals: "true",
       flush_signal: "true",
     });
@@ -195,21 +221,49 @@ export async function createStreamingStt({
       } catch (_) {
         return;
       }
-      const transcript = msg?.data?.transcript ?? msg?.transcript ?? "";
-      if (transcript.trim()) onFinalTranscript?.(transcript);
+      const transcript =
+        msg?.data?.transcript ??
+        msg?.data?.translation ??
+        msg?.transcript ??
+        msg?.translation ??
+        "";
+      const detectedLanguage =
+        msg?.data?.language_code ??
+        msg?.data?.languageCode ??
+        msg?.language_code ??
+        msg?.languageCode ??
+        null;
+      const type = String(msg?.type ?? "").toLowerCase();
+      if (type === "error" || msg?.error) {
+        onError?.(new Error(msg?.error?.message ?? msg?.message ?? "Sarvam STT error"));
+        return;
+      }
+      if (transcript.trim()) {
+        onFinalTranscript?.(
+          transcript,
+          detectedLanguage ? normalizeLanguageCode(detectedLanguage) : null,
+        );
+      }
     });
     socket.on("error", (err) => onError?.(err));
 
     return {
       sendTwilioMulaw: (mulawBuf) => {
-        if (socket.readyState !== WebSocket.OPEN) return false;
-        socket.send(decodeMulaw(mulawBuf));
-        return true;
+        const pcm = decodeMulaw(mulawBuf);
+        return sendJson(
+          socket,
+          {
+            audio: {
+              data: pcm.toString("base64"),
+              sample_rate: SARVAM_STT_SAMPLE_RATE,
+              encoding: "pcm_s16le",
+            },
+          },
+          onError,
+        );
       },
       flush: () => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "flush" }));
-        }
+        sendJson(socket, { type: "flush" }, onError);
       },
       isClosed: () => socket.readyState !== WebSocket.OPEN,
       close: () => socket.close(),
@@ -228,9 +282,10 @@ export async function createStreamingTts({
   onDone,
   onError,
 }) {
+  const language = normalizeLanguageCode(languageCode);
   if (provider === "google") {
     const client = getTextToSpeechClient();
-    const streamingVoice = resolveGoogleStreamingVoice(languageCode, voiceId);
+    const streamingVoice = resolveGoogleStreamingVoice(language, voiceId);
     console.log(`[google/tts/stream] voice=${streamingVoice}`);
 
     let stream = null;
@@ -242,7 +297,9 @@ export async function createStreamingTts({
       stream = client.streamingSynthesize();
       stream.on("data", (data) => {
         if (data.audioContent?.length) {
-          onMulawAudio?.(linear16ToMulaw(Buffer.from(data.audioContent), 24000));
+          onMulawAudio?.(
+            linear16ToMulaw(Buffer.from(data.audioContent), 24000),
+          );
         }
       });
       stream.on("end", () => {
@@ -264,13 +321,19 @@ export async function createStreamingTts({
         if (closed) return false;
         try {
           const s = openStream();
-          if (s.destroyed) { closed = true; return false; }
+          if (s.destroyed) {
+            closed = true;
+            return false;
+          }
           if (!configSent) {
             configSent = true;
             s.write({
               streamingConfig: {
-                voice: { languageCode, name: streamingVoice },
-                streamingAudioConfig: { audioEncoding: "PCM", sampleRateHertz: 24000 },
+                voice: { languageCode: language, name: streamingVoice },
+                streamingAudioConfig: {
+                  audioEncoding: "PCM",
+                  sampleRateHertz: 24000,
+                },
               },
             });
           }
@@ -294,6 +357,7 @@ export async function createStreamingTts({
   }
 
   if (provider === "sarvam") {
+    if (!SARVAM_API_KEY) throw new Error("SARVAM_API_KEY is not set");
     const params = new URLSearchParams({
       model: process.env.SARVAM_TTS_MODEL ?? "bulbul:v3",
       send_completion_event: "true",
@@ -302,19 +366,27 @@ export async function createStreamingTts({
       `wss://api.sarvam.ai/text-to-speech/ws?${params.toString()}`,
       { "Api-Subscription-Key": SARVAM_API_KEY },
     );
-    socket.send(
-      JSON.stringify({
-        type: "config",
-        data: {
-          speaker: voiceId,
-          target_language_code: languageCode,
-          pace,
-          min_buffer_size: 35,
-          max_chunk_length: 140,
-          output_audio_codec: "mulaw",
-        },
-      }),
-    );
+    let doneResolved = false;
+    let doneResolver = null;
+    let doneTimer = null;
+
+    function resolveDone() {
+      if (doneResolved) return;
+      doneResolved = true;
+      if (doneTimer) clearTimeout(doneTimer);
+      doneTimer = null;
+      doneResolver?.();
+      onDone?.();
+    }
+
+    function waitForDone() {
+      if (doneResolved) return Promise.resolve();
+      return new Promise((resolve) => {
+        doneResolver = resolve;
+        if (doneTimer) clearTimeout(doneTimer);
+        doneTimer = setTimeout(resolveDone, SARVAM_TTS_DONE_TIMEOUT_MS);
+      });
+    }
 
     socket.on("message", (raw) => {
       let msg;
@@ -326,20 +398,34 @@ export async function createStreamingTts({
       const audio = msg?.data?.audio ?? msg?.audio ?? msg?.data?.audio_base64;
       if (audio) onMulawAudio?.(Buffer.from(audio, "base64"));
       const eventType = msg?.data?.event_type ?? msg?.event_type;
-      if (eventType === "final") onDone?.();
+      if (eventType === "final") resolveDone();
     });
     socket.on("error", (err) => onError?.(err));
+    socket.on("close", resolveDone);
+
+    sendJson(
+      socket,
+      {
+        type: "config",
+        data: {
+          speaker: voiceId,
+          target_language_code: language,
+          pace,
+          min_buffer_size: 35,
+          max_chunk_length: 140,
+          output_audio_codec: "mulaw",
+        },
+      },
+      onError,
+    );
 
     return {
       sendText: (text) => {
-        if (socket.readyState !== WebSocket.OPEN) return false;
-        socket.send(JSON.stringify({ type: "text", data: { text } }));
-        return true;
+        return sendJson(socket, { type: "text", data: { text } }, onError);
       },
       flush: () => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "flush" }));
-        }
+        sendJson(socket, { type: "flush" }, onError);
+        return waitForDone();
       },
       isClosed: () => socket.readyState !== WebSocket.OPEN,
       close: () => socket.close(),

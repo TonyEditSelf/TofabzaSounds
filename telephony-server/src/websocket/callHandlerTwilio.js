@@ -13,7 +13,13 @@
 
 import { createClient } from "@supabase/supabase-js";
 import ws from "ws";
-import { getVoiceProvider, stt, tts } from "../voice/provider.js";
+import {
+  getVoiceProvider,
+  normalizeLanguageCode,
+  resolveVoiceId,
+  stt,
+  tts,
+} from "../voice/provider.js";
 import { createStreamingStt, createStreamingTts } from "../voice/streaming.js";
 import { getLLMReply, streamLLMReply } from "../pipeline/llm.js";
 import { upsample8kTo16k } from "../lib/audio.js";
@@ -125,10 +131,11 @@ export function handleCall(ws, req) {
   let streamingStt = null;
   let streamingSttPausedForBot = false;
   let latestStreamingInterim = "";
+  let latestStreamingLanguage = null;
   let detectedLang = null;
   let streamingFallbackTimer = null;
   let streamingFallbackGeneration = 0;
-  const voiceProvider = getVoiceProvider();
+  let voiceProvider = getVoiceProvider();
 
   console.log(
     `[twilio] New connection agentId=${agentId} voiceProvider=${voiceProvider}` +
@@ -154,30 +161,36 @@ export function handleCall(ws, req) {
       return;
     }
     agent = data;
-    console.log(`[twilio] Agent loaded: ${agent.name}`);
+    voiceProvider = getVoiceProvider(agent.config);
+    console.log(
+      `[twilio] Agent loaded: ${agent.name} voiceProvider=${voiceProvider}`,
+    );
   }
 
   async function initStreamingPipeline() {
     if (!STREAMING_PIPELINE || !STREAMING_STT || streamingStt) return;
     streamingStt = await createStreamingStt({
       provider: voiceProvider,
-      languageCode: agent.language ?? lang,
+      languageCode: normalizeLanguageCode(agent.language ?? lang),
       onInterimTranscript: (text, lang) => {
         latestStreamingInterim = text?.trim() ?? "";
-        if (lang && lang !== detectedLang) {
-          detectedLang = lang;
-          console.log(`[twilio/stt] detected language: ${lang}`);
+        const nextLang = lang ? normalizeLanguageCode(lang) : null;
+        if (nextLang && nextLang !== latestStreamingLanguage) {
+          latestStreamingLanguage = nextLang;
+          console.log(`[twilio/stt] detected language: ${nextLang}`);
         }
         console.log(`[twilio/stt/interim] "${text.slice(0, 80)}"`);
       },
       onFinalTranscript: async (text, lang) => {
         const transcript = text?.trim();
         if (!transcript || isProcessing || !agent) return;
-        if (lang && lang !== detectedLang) {
-          detectedLang = lang;
-          console.log(`[twilio/stt] detected language (final): ${lang}`);
+        const nextLang = lang ? normalizeLanguageCode(lang) : latestStreamingLanguage;
+        if (nextLang && nextLang !== detectedLang) {
+          detectedLang = nextLang;
+          console.log(`[twilio/stt] active language: ${detectedLang}`);
         }
         latestStreamingInterim = "";
+        latestStreamingLanguage = null;
         streamingFallbackGeneration++;
         if (streamingFallbackTimer) clearTimeout(streamingFallbackTimer);
         streamingFallbackTimer = null;
@@ -244,16 +257,14 @@ export function handleCall(ws, req) {
     );
   }
 
-  function sendMulawAudio(mulawBuf) {
+  // Send audio bytes only — no mark. Call commitBotAudioMark() once when the full reply is done.
+  function streamAudioChunk(mulawBuf) {
     if (!streamSid || ws.readyState !== 1 || !mulawBuf?.length) return;
     if (STREAMING_PIPELINE && STREAMING_STT && streamingStt && !streamingSttPausedForBot) {
       streamingSttPausedForBot = true;
       console.log("[twilio/stt/stream] paused for bot audio");
     }
     isBotSpeaking = true;
-    const markName = `bot-${++markCounter}`;
-    pendingMarks.add(markName);
-
     const chunks = chunkBuffer(mulawBuf, 640);
     for (const chunk of chunks) {
       if (ws.readyState !== 1) break;
@@ -265,6 +276,13 @@ export function handleCall(ws, req) {
         }),
       );
     }
+  }
+
+  // Send ONE mark after the entire reply's audio is queued.
+  function commitBotAudioMark(totalBytes) {
+    if (!streamSid || ws.readyState !== 1 || !isBotSpeaking) return;
+    const markName = `bot-${++markCounter}`;
+    pendingMarks.add(markName);
     ws.send(
       JSON.stringify({
         event: "mark",
@@ -272,8 +290,8 @@ export function handleCall(ws, req) {
         mark: { name: markName },
       }),
     );
-    armBotAudioWatchdog(mulawBuf.length);
-    console.log(`[twilio] sent audio, waiting for mark: ${markName}`);
+    armBotAudioWatchdog(totalBytes);
+    console.log(`[twilio] reply audio committed, mark: ${markName}`);
   }
 
   function sendClear() {
@@ -314,6 +332,11 @@ export function handleCall(ws, req) {
         console.warn(
           `[twilio/stt/fallback] using interim "${transcript.slice(0, 80)}"`,
         );
+        if (latestStreamingLanguage && latestStreamingLanguage !== detectedLang) {
+          detectedLang = latestStreamingLanguage;
+          console.log(`[twilio/stt] active language: ${detectedLang}`);
+        }
+        latestStreamingLanguage = null;
         await runReplyPipeline(transcript);
       }, 700);
       pcmChunks = [];
@@ -380,7 +403,11 @@ export function handleCall(ws, req) {
     return { chunks, rest };
   }
 
-  async function runReplyPipeline(transcript, manageProcessing = true) {
+  async function runReplyPipeline(
+    transcript,
+    manageProcessing = true,
+    initialTurn = false,
+  ) {
     if (manageProcessing) {
       if (isProcessing || !agent) return;
       isProcessing = true;
@@ -389,7 +416,19 @@ export function handleCall(ws, req) {
     let generation = null;
     let replyAbort = null;
     const t0 = Date.now();
-    const activeLang = detectedLang ?? agent.language ?? lang;
+    const primaryLang = normalizeLanguageCode(agent.language ?? lang);
+    const activeLang = initialTurn
+      ? primaryLang
+      : normalizeLanguageCode(detectedLang ?? primaryLang);
+    const activeVoiceId = resolveVoiceId({
+      languageCode: activeLang,
+      agentConfig: agent.config,
+      voiceProvider,
+    });
+    console.log(
+      `[twilio/voice] language=${activeLang} voice=${activeVoiceId}` +
+        (initialTurn ? " initial=true" : ""),
+    );
 
     try {
       if (isBotSpeaking) sendClear();
@@ -397,16 +436,24 @@ export function handleCall(ws, req) {
       replyAbort = new AbortController();
       activeReplyAbort = replyAbort;
 
-      history.push({ role: "user", content: transcript });
+      if (!initialTurn) history.push({ role: "user", content: transcript });
 
       let pendingText = "";
       let reply = "";
       let streamedReplyText = "";
       let sentAnyAudio = false;
+      let totalAudioBytes = 0;
       let ttsHandled = false;
       let ttsStream = null;
       let ttsStreamFailed = false;
       let ttsQueue = Promise.resolve();
+
+      function sendReplyAudio(mulawBuf) {
+        if (!mulawBuf?.length) return;
+        totalAudioBytes += mulawBuf.length;
+        sentAnyAudio = true;
+        streamAudioChunk(mulawBuf);
+      }
 
       async function ensureTtsStream() {
         if (ttsStream && !ttsStreamFailed && !ttsStream.isClosed?.())
@@ -416,7 +463,7 @@ export function handleCall(ws, req) {
           ttsStream = await createStreamingTts({
             provider: voiceProvider,
             languageCode: activeLang,
-            voiceId: agent.config?.voice_id,
+            voiceId: activeVoiceId,
             pace: agent.config?.pace ?? 1.0,
             onMulawAudio: (mulawBuf) => {
               if (
@@ -426,7 +473,7 @@ export function handleCall(ws, req) {
                 return;
               sentAnyAudio = true;
               console.log(`[twilio/tts/stream] audio bytes=${mulawBuf.length}`);
-              sendMulawAudio(mulawBuf);
+              sendReplyAudio(mulawBuf);
             },
             onDone: () => console.log("[twilio/tts/stream] done"),
             onError: (err) => {
@@ -445,8 +492,11 @@ export function handleCall(ws, req) {
 
       const enqueueTts = (text) => {
         if (!text?.trim()) return;
-        // Strip LLM stage directions like (curious, caring) and stray quotes/asterisks
-        const chunkText = text.replace(/\([^)]*\)/g, '').replace(/["*]/g, '').replace(/\s+/g, ' ').trim();
+        const chunkText = text
+          .replace(/\([^)]*\)/g, "")
+          .replace(/["*]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
         if (!chunkText) return;
 
         if (STREAMING_PIPELINE && STREAMING_TTS && !ttsStreamFailed) {
@@ -470,16 +520,17 @@ export function handleCall(ws, req) {
             const mulawBuf = await tts({
               text: chunkText,
               languageCode: activeLang,
-              voiceId: agent.config?.voice_id,
+              voiceId: activeVoiceId,
               pace: agent.config?.pace ?? 1.0,
               sampleRate: TWILIO_SAMPLE_RATE,
               audioEncoding: "MULAW",
               agentConfig: agent.config,
+              voiceProvider,
             });
             if (replyAbort.signal.aborted || generation !== playbackGeneration)
               return;
             sentAnyAudio = true;
-            sendMulawAudio(mulawBuf);
+            sendReplyAudio(mulawBuf);
           });
           return;
         }
@@ -492,16 +543,17 @@ export function handleCall(ws, req) {
           const mulawBuf = await tts({
             text: chunkText,
             languageCode: activeLang,
-            voiceId: agent.config?.voice_id,
+            voiceId: activeVoiceId,
             pace: agent.config?.pace ?? 1.0,
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
             agentConfig: agent.config,
+            voiceProvider,
           });
           if (replyAbort.signal.aborted || generation !== playbackGeneration)
             return;
           sentAnyAudio = true;
-          sendMulawAudio(mulawBuf);
+          sendReplyAudio(mulawBuf);
         });
       };
 
@@ -512,6 +564,7 @@ export function handleCall(ws, req) {
           language: activeLang,
           config: agent.config,
           signal: replyAbort.signal,
+          initialTurn,
           onToken: (token) => {
             streamedReplyText += token;
             pendingText += token;
@@ -528,7 +581,8 @@ export function handleCall(ws, req) {
         const finalChunks = takeReadyTtsChunks(pendingText, true);
         finalChunks.chunks.forEach(enqueueTts);
         await ttsQueue;
-        if (ttsStream) ttsStream.flush();
+        if (ttsStream) await ttsStream.flush();
+        if (sentAnyAudio) commitBotAudioMark(totalAudioBytes);
         if (!reply?.trim() && streamedReplyText.trim()) {
           reply = streamedReplyText.trim();
         }
@@ -551,21 +605,24 @@ export function handleCall(ws, req) {
         reply = await getLLMReply({
           agentId: agent.id,
           history,
-          language: agent.language ?? lang,
+          language: activeLang,
           config: agent.config,
+          initialTurn,
         });
         if (!reply?.trim()) throw new Error("LLM returned an empty reply");
         console.log(`[twilio/tts/batch] fallback full chars=${reply.length}`);
         const mulawBuf = await tts({
           text: reply,
           languageCode: activeLang,
-          voiceId: agent.config?.voice_id,
+          voiceId: activeVoiceId,
           pace: agent.config?.pace ?? 1.0,
           sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
           agentConfig: agent.config,
+          voiceProvider,
         });
-        sendMulawAudio(mulawBuf);
+        sendReplyAudio(mulawBuf);
+        commitBotAudioMark(totalAudioBytes);
       }
 
       console.log(`[twilio/llm] "${reply.slice(0, 80)}"`);
@@ -582,7 +639,9 @@ export function handleCall(ws, req) {
     if (isProcessing || !agent) return;
     isProcessing = true;
     const t0 = Date.now();
-    const activeLang = detectedLang ?? agent?.language ?? lang;
+    const activeLang = normalizeLanguageCode(
+      detectedLang ?? agent?.language ?? lang,
+    );
     console.log(
       `[twilio/pipeline] start, provider=${voiceProvider}, bufSize=${sttBuffer.length}`,
     );
@@ -602,6 +661,8 @@ export function handleCall(ws, req) {
         audioBuffer: sttBuffer,
         languageCode: activeLang,
         mimeType: voiceProvider === "google" ? "audio/basic" : "audio/wav",
+        agentConfig: agent.config,
+        voiceProvider,
         ...sttOptions,
       });
       console.log(`[twilio/stt] "${transcript}"`);
@@ -620,13 +681,19 @@ export function handleCall(ws, req) {
           agent?.config?.fallback_message ?? "I am sorry, please try again.";
         const mulawBuf = await tts({
           text: msg,
-          languageCode: detectedLang ?? agent?.language ?? lang,
-          voiceId: agent?.config?.voice_id,
+          languageCode: activeLang,
+          voiceId: resolveVoiceId({
+            languageCode: activeLang,
+            agentConfig: agent?.config,
+            voiceProvider,
+          }),
           sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
           agentConfig: agent?.config,
+          voiceProvider,
         });
-        sendMulawAudio(mulawBuf);
+        streamAudioChunk(mulawBuf);
+        commitBotAudioMark(mulawBuf.length);
       } catch (_) {}
     } finally {
       isProcessing = false;
@@ -682,9 +749,8 @@ export function handleCall(ws, req) {
           });
         }, MAX_CALL_DURATION_MS);
 
-        // Trigger the initial greeting using the LLM pipeline
-        runReplyPipeline("").catch((err) => {
-          console.error("[twilio] greeting pipeline error:", err?.message);
+        runReplyPipeline("", true, true).catch((err) => {
+          console.error("[twilio] initial reply error:", err?.message);
         });
         break;
       }

@@ -7,6 +7,22 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
+const VOICE_PROVIDER_FALLBACK = normaliseVoiceProvider(
+  process.env.NEXT_PUBLIC_VOICE_PROVIDER,
+);
+
+function normaliseVoiceProvider(provider) {
+  return provider === "google" ? "google" : "sarvam";
+}
+
+async function fetchVoiceProvider() {
+  const res = await fetch("/api/settings");
+  if (!res.ok) return VOICE_PROVIDER_FALLBACK;
+  const data = await res.json();
+  return normaliseVoiceProvider(
+    data?.settings?.voice_provider ?? data?.voice_provider,
+  );
+}
 
 async function fetchClients() {
   const { data } = await supabase
@@ -52,6 +68,13 @@ export default function NewAgentPage() {
   const { data: clients = [] } = useSWR("clients-list", fetchClients, {
     revalidateOnFocus: false,
   });
+  const { data: platformVoiceProvider = VOICE_PROVIDER_FALLBACK } = useSWR(
+    "voice-provider",
+    fetchVoiceProvider,
+    {
+      revalidateOnFocus: false,
+    },
+  );
   const { data: customFacilities = [] } = useSWR(
     "custom-facilities",
     fetchCustomFacilities,
@@ -85,11 +108,10 @@ export default function NewAgentPage() {
         type: form.type,
         status: "inactive",
         language: "ml-IN",
-        voice_id: "anand",
         config: {
+          voice_provider: platformVoiceProvider,
           llm_provider: "gemini-flash",
           prompt: "",
-          greeting: "",
           facility_type: form.facility_type,
           whatsapp_number: form.whatsapp_number || undefined,
         },
@@ -141,7 +163,7 @@ export default function NewAgentPage() {
             marginBottom: "0.5rem",
           }}
         >
-          Agent "{createdAgent.name}" created!
+          Agent &quot;{createdAgent.name}&quot; created!
         </h2>
         <p
           style={{

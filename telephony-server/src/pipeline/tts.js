@@ -15,17 +15,18 @@ const TIMEOUT_MS = 10000;
  * @param {object} params
  * @param {string} params.text
  * @param {string} params.language  - BCP-47 e.g. "ml-IN"
- * @param {string} params.speaker   - e.g. "anand"
+ * @param {string} params.speaker
  * @param {number} params.pace      - 0.5–2.0
  * @returns {Promise<Buffer>} WAV buffer
  */
 export async function synthesizeSpeech({
   text,
   language = "ml-IN",
-  speaker = "anand",
+  speaker,
   pace = 1.0,
 }) {
   if (!text?.trim()) throw new Error("TTS: text is required");
+  if (!speaker) throw new Error("TTS: speaker is required");
 
   // Clamp pace to valid range
   const safePace = Math.min(2.0, Math.max(0.5, pace));
