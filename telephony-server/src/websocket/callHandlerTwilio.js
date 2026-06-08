@@ -122,8 +122,6 @@ export function handleCall(ws, req) {
   let callEnded = false;
   let markCounter = 0;
   const pendingMarks = new Set();
-  let initialGreetingPending = false;
-  let initialGreetingSent = false;
   let streamingStt = null;
   let streamingSttPausedForBot = false;
   let latestStreamingInterim = "";
@@ -221,7 +219,6 @@ export function handleCall(ws, req) {
     botAudioTimer = null;
     isBotSpeaking = false;
     pendingMarks.clear();
-    if (initialGreetingPending) initialGreetingPending = false;
     console.log(`[twilio] now listening (${reason})`);
     if (STREAMING_PIPELINE && STREAMING_STT && !callEnded) {
       streamingSttPausedForBot = false;
@@ -236,7 +233,7 @@ export function handleCall(ws, req) {
     const playbackMs = Math.ceil((byteLength / TWILIO_SAMPLE_RATE) * 1000);
     botAudioTimer = setTimeout(
       () => {
-        if (pendingMark === markName) {
+        if (pendingMarks.has(markName)) {
           console.warn(`[twilio] mark timeout, listening anyway: ${markName}`);
           markBotAudioDone(markName, "mark-timeout");
         }
@@ -668,8 +665,6 @@ export function handleCall(ws, req) {
         if (!agent) break;
 
         console.log(`[twilio] start callSid=${callSid}`);
-        initialGreetingPending = true;
-        initialGreetingSent = false;
 
         callLogId = await createCallLog(supabase, {
           callSid,
@@ -685,45 +680,10 @@ export function handleCall(ws, req) {
           });
         }, MAX_CALL_DURATION_MS);
 
-        // Play greeting — Google TTS returns raw mulaw 8kHz, send directly
-        try {
-          const istHour = Number(new Intl.DateTimeFormat("en-US", {
-            timeZone: "Asia/Kolkata",
-            hour: "numeric",
-            hour12: false
-          }).format(new Date()));
-
-          let greetingText = "Good evening";
-          if (istHour >= 5 && istHour < 12) {
-            greetingText = "Good morning";
-          } else if (istHour >= 12 && istHour < 17) {
-            greetingText = "Good afternoon";
-          }
-
-          const greetingMulaw = await tts({
-            text: greetingText,
-            languageCode: detectedLang ?? agent.language ?? lang,
-            voiceId: agent.config?.voice_id,
-            pace: agent.config?.pace ?? 1.0,
-            sampleRate: TWILIO_SAMPLE_RATE,
-            audioEncoding: "MULAW",
-            agentConfig: agent.config,
-          });
-          isBotSpeaking = true;
-          initialGreetingSent = true;
-          sendMulawAudio(greetingMulaw);
-        } catch (err) {
-          console.error("[twilio] greeting error:", err?.message);
-          initialGreetingPending = false;
-          initialGreetingSent = false;
-          isBotSpeaking = false;
-          ensureStreamingStt().catch((sttErr) => {
-            console.error(
-              "[twilio/stt/stream] start after greeting failure failed:",
-              sttErr?.message,
-            );
-          });
-        }
+        // Trigger the initial greeting using the LLM pipeline
+        runReplyPipeline("").catch((err) => {
+          console.error("[twilio] greeting pipeline error:", err?.message);
+        });
         break;
       }
 
@@ -731,7 +691,6 @@ export function handleCall(ws, req) {
         const payload = msg.media?.payload;
         if (!payload) break;
         if (!streamSid || !agent) break;
-        if (initialGreetingPending && !initialGreetingSent) break;
 
         // Decode incoming mulaw 8kHz -> PCM for VAD + STT
         const mulawBuf = Buffer.from(payload, "base64");
