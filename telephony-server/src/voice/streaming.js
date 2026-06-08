@@ -92,7 +92,9 @@ export async function createStreamingStt({
 }) {
   if (provider === "google") {
     const speech = await import("@google-cloud/speech");
-    const client = new speech.SpeechClient({ credentials: googleCredentials() });
+    const client = new speech.SpeechClient({
+      credentials: googleCredentials(),
+    });
     let closed = false;
     const stream = client
       .streamingRecognize({
@@ -100,6 +102,15 @@ export async function createStreamingStt({
           encoding: "MULAW",
           sampleRateHertz: 8000,
           languageCode,
+          alternativeLanguageCodes: [
+            "en-IN",
+            "hi-IN",
+            "ml-IN",
+            "ta-IN",
+            "kn-IN",
+            "te-IN",
+            "mr-IN",
+          ].filter((l) => l !== languageCode),
           enableAutomaticPunctuation: true,
           model: process.env.GOOGLE_STT_MODEL,
         },
@@ -117,8 +128,9 @@ export async function createStreamingStt({
         const result = data.results?.[0];
         const transcript = result?.alternatives?.[0]?.transcript ?? "";
         if (!transcript.trim()) return;
-        if (result.isFinal) onFinalTranscript?.(transcript);
-        else onInterimTranscript?.(transcript);
+        const detectedLanguage = result?.languageCode ?? null;
+        if (result.isFinal) onFinalTranscript?.(transcript, detectedLanguage);
+        else onInterimTranscript?.(transcript, detectedLanguage);
       });
 
     return {

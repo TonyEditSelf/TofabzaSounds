@@ -128,6 +128,7 @@ export function handleCall(ws, req) {
   let streamingStt = null;
   let streamingSttPausedForBot = false;
   let latestStreamingInterim = "";
+  let detectedLang = null;
   let streamingFallbackTimer = null;
   let streamingFallbackGeneration = 0;
   const voiceProvider = getVoiceProvider();
@@ -163,14 +164,22 @@ export function handleCall(ws, req) {
     if (!STREAMING_PIPELINE || !STREAMING_STT || streamingStt) return;
     streamingStt = await createStreamingStt({
       provider: voiceProvider,
-      languageCode: agent.language ?? lang,
-      onInterimTranscript: (text) => {
+      languageCode: activeLang,
+      onInterimTranscript: (text, lang) => {
         latestStreamingInterim = text?.trim() ?? "";
+        if (lang && lang !== detectedLang) {
+          detectedLang = lang;
+          console.log(`[twilio/stt] detected language: ${lang}`);
+        }
         console.log(`[twilio/stt/interim] "${text.slice(0, 80)}"`);
       },
-      onFinalTranscript: async (text) => {
+      onFinalTranscript: async (text, lang) => {
         const transcript = text?.trim();
         if (!transcript || isProcessing || !agent) return;
+        if (lang && lang !== detectedLang) {
+          detectedLang = lang;
+          console.log(`[twilio/stt] detected language (final): ${lang}`);
+        }
         latestStreamingInterim = "";
         streamingFallbackGeneration++;
         if (streamingFallbackTimer) clearTimeout(streamingFallbackTimer);
@@ -336,14 +345,14 @@ export function handleCall(ws, req) {
 
   // ── Pipeline ─────────────────────────────────────────────────────────────────
 
-  function takeReadyTtsChunks(text, force = false) {
+  function takeReadyTtsChunks(text, force = false, minChars = TTS_MIN_CHARS) {
     const chunks = [];
     let rest = text.replace(/\s+/g, " ");
 
     while (rest.trim().length) {
       const boundaryMatches = [...rest.matchAll(/[.!?\u0964]\s+/g)];
       const boundary = boundaryMatches.find(
-        (m) => m.index + m[0].length >= TTS_MIN_CHARS,
+        (m) => m.index + m[0].length >= minChars,
       );
 
       if (boundary) {
@@ -381,6 +390,7 @@ export function handleCall(ws, req) {
     let generation = null;
     let replyAbort = null;
     const t0 = Date.now();
+    const activeLang = detectedLang ?? agent.language ?? lang;
 
     try {
       if (isBotSpeaking) sendClear();
@@ -398,59 +408,67 @@ export function handleCall(ws, req) {
       let ttsStream = null;
       let ttsStreamFailed = false;
       let ttsQueue = Promise.resolve();
-      let firstChunkSent = false; // ← NEW
 
-      try {
-        ttsStream =
-          STREAMING_PIPELINE && STREAMING_TTS
-            ? await createStreamingTts({
-                provider: voiceProvider,
-                languageCode: agent.language ?? lang,
-                voiceId: agent.config?.voice_id,
-                pace: agent.config?.pace ?? 1.0,
-                onMulawAudio: (mulawBuf) => {
-                  if (
-                    replyAbort.signal.aborted ||
-                    generation !== playbackGeneration
-                  )
-                    return;
-                  sentAnyAudio = true;
-                  console.log(
-                    `[twilio/tts/stream] audio bytes=${mulawBuf.length}`,
-                  );
-                  sendMulawAudio(mulawBuf);
-                },
-                onDone: () => console.log("[twilio/tts/stream] done"),
-                onError: (err) => {
-                  ttsStreamFailed = true;
-                  console.error("[twilio/tts/stream] ERROR:", err?.message);
-                },
-              })
-            : null;
-        if (ttsStream)
+      async function ensureTtsStream() {
+        if (ttsStream && !ttsStreamFailed && !ttsStream.isClosed?.())
+          return ttsStream;
+        if (ttsStreamFailed) return null;
+        try {
+          ttsStream = await createStreamingTts({
+            provider: voiceProvider,
+            languageCode: activeLang,
+            voiceId: agent.config?.voice_id,
+            pace: agent.config?.pace ?? 1.0,
+            onMulawAudio: (mulawBuf) => {
+              if (
+                replyAbort.signal.aborted ||
+                generation !== playbackGeneration
+              )
+                return;
+              sentAnyAudio = true;
+              console.log(`[twilio/tts/stream] audio bytes=${mulawBuf.length}`);
+              sendMulawAudio(mulawBuf);
+            },
+            onDone: () => console.log("[twilio/tts/stream] done"),
+            onError: (err) => {
+              ttsStreamFailed = true;
+              console.error("[twilio/tts/stream] ERROR:", err?.message);
+            },
+          });
           console.log(`[twilio/tts/stream] started provider=${voiceProvider}`);
-      } catch (err) {
-        console.warn(
-          "[twilio/tts/stream] unavailable, using chunked batch:",
-          err?.message,
-        );
+          return ttsStream;
+        } catch (err) {
+          console.warn("[twilio/tts/stream] unavailable:", err?.message);
+          ttsStreamFailed = true;
+          return null;
+        }
       }
 
-      // ── NEW: batch-first helper ───────────────────────────────────────────────
-      // Fire the first TTS chunk via REST for fast TTFB, then hand off to stream.
-      const sendFirstChunkBatch = (text) => {
-        if (firstChunkSent || !text?.trim()) return;
-        firstChunkSent = true;
+      const enqueueTts = (text) => {
+        if (!text?.trim()) return;
         const chunkText = text.trim();
-        ttsHandled = true;
-        ttsQueue = ttsQueue.then(async () => {
-          if (replyAbort.signal.aborted || generation !== playbackGeneration)
-            return;
-          console.log(`[twilio/tts/first-batch] chars=${chunkText.length}`);
-          try {
+
+        if (STREAMING_PIPELINE && STREAMING_TTS && !ttsStreamFailed) {
+          ttsQueue = ttsQueue.then(async () => {
+            if (replyAbort.signal.aborted || generation !== playbackGeneration)
+              return;
+            const stream = await ensureTtsStream();
+            if (stream && !ttsStreamFailed && !stream.isClosed?.()) {
+              const accepted = stream.sendText(chunkText);
+              if (accepted !== false) {
+                ttsHandled = true;
+                return;
+              }
+              ttsStreamFailed = true;
+              console.warn(
+                "[twilio/tts/stream] rejected, falling back to batch",
+              );
+            }
+            ttsHandled = true;
+            console.log(`[twilio/tts/batch] chunk chars=${chunkText.length}`);
             const mulawBuf = await tts({
               text: chunkText,
-              languageCode: agent.language ?? lang,
+              languageCode: activeLang,
               voiceId: agent.config?.voice_id,
               pace: agent.config?.pace ?? 1.0,
               sampleRate: TWILIO_SAMPLE_RATE,
@@ -460,44 +478,10 @@ export function handleCall(ws, req) {
               return;
             sentAnyAudio = true;
             sendMulawAudio(mulawBuf);
-          } catch (err) {
-            console.warn("[twilio/tts/first-batch] failed:", err?.message);
-            firstChunkSent = false; // allow retry via normal path
-          }
-        });
-      };
-      // ─────────────────────────────────────────────────────────────────────────
-
-      const enqueueTts = (text) => {
-        if (!text?.trim()) return;
-        const chunkText = text.trim();
-
-        // ── NEW: first chunk always goes batch for fast TTFB ─────────────────
-        if (!firstChunkSent && STREAMING_PIPELINE && STREAMING_TTS) {
-          sendFirstChunkBatch(chunkText);
+          });
           return;
         }
-        // ─────────────────────────────────────────────────────────────────────
 
-        if (ttsStream && !ttsStreamFailed && !ttsStream.isClosed?.()) {
-          const accepted = ttsStream.sendText(chunkText);
-          if (accepted !== false) {
-            ttsHandled = true;
-            return;
-          }
-          ttsStreamFailed = true;
-          console.warn("[twilio/tts/stream] rejected text, using batch chunk");
-        }
-        if (ttsStream?.isClosed?.()) {
-          ttsStreamFailed = true;
-        }
-        if (ttsStreamFailed && ttsStream) {
-          ttsStream.close?.();
-          ttsStream = null;
-        }
-        if (ttsStream) {
-          return;
-        }
         ttsHandled = true;
         ttsQueue = ttsQueue.then(async () => {
           if (replyAbort.signal.aborted || generation !== playbackGeneration)
@@ -505,7 +489,7 @@ export function handleCall(ws, req) {
           console.log(`[twilio/tts/batch] chunk chars=${chunkText.length}`);
           const mulawBuf = await tts({
             text: chunkText,
-            languageCode: agent.language ?? lang,
+            languageCode: activeLang,
             voiceId: agent.config?.voice_id,
             pace: agent.config?.pace ?? 1.0,
             sampleRate: TWILIO_SAMPLE_RATE,
@@ -522,13 +506,17 @@ export function handleCall(ws, req) {
         reply = await streamLLMReply({
           agentId: agent.id,
           history,
-          language: agent.language ?? lang,
+          language: activeLang,
           config: agent.config,
           signal: replyAbort.signal,
           onToken: (token) => {
             streamedReplyText += token;
             pendingText += token;
-            const ready = takeReadyTtsChunks(pendingText);
+            const ready = takeReadyTtsChunks(
+              pendingText,
+              false,
+              STREAMING_PIPELINE && STREAMING_TTS ? 15 : TTS_MIN_CHARS,
+            );
             pendingText = ready.rest;
             ready.chunks.forEach(enqueueTts);
           },
@@ -567,7 +555,7 @@ export function handleCall(ws, req) {
         console.log(`[twilio/tts/batch] fallback full chars=${reply.length}`);
         const mulawBuf = await tts({
           text: reply,
-          languageCode: agent.language ?? lang,
+          languageCode: activeLang,
           voiceId: agent.config?.voice_id,
           pace: agent.config?.pace ?? 1.0,
           sampleRate: TWILIO_SAMPLE_RATE,
@@ -607,7 +595,7 @@ export function handleCall(ws, req) {
           : {};
       const transcript = await stt({
         audioBuffer: sttBuffer,
-        languageCode: agent.language ?? lang,
+        languageCode: activeLang,
         mimeType: voiceProvider === "google" ? "audio/basic" : "audio/wav",
         ...sttOptions,
       });
@@ -630,7 +618,7 @@ export function handleCall(ws, req) {
           agent?.config?.fallback_message ?? "I am sorry, please try again.";
         const mulawBuf = await tts({
           text: msg,
-          languageCode: agent?.language ?? lang,
+          languageCode: detectedLang ?? agent?.language ?? lang,
           voiceId: agent?.config?.voice_id,
           sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
@@ -697,7 +685,7 @@ export function handleCall(ws, req) {
         try {
           const greetingMulaw = await tts({
             text: agent.config?.greeting ?? "",
-            languageCode: agent.language ?? lang,
+            languageCode: activeLang,
             voiceId: agent.config?.voice_id,
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
