@@ -66,6 +66,7 @@ const SARVAM_SPEAKERS = new Set([
 // Google
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 let googleTokenCache = null;
+let cachedCryptoKey = null;
 
 // ── Sarvam axios instance ─────────────────────────────────────────────────────
 
@@ -201,17 +202,21 @@ async function getGoogleAccessToken() {
 
   const unsigned = `${header}.${payload}`;
 
-  const der = Buffer.from(
-    normalizedPrivateKey.replace(/-----[^-]+-----|\n/g, ""),
-    "base64",
-  );
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    der,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+  if (!cachedCryptoKey) {
+    const der = Buffer.from(
+      normalizedPrivateKey.replace(/-----[^-]+-----|\n/g, ""),
+      "base64",
+    );
+    cachedCryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      der,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  }
+  const key = cachedCryptoKey;
+
   const sig = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     key,

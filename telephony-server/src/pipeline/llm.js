@@ -59,8 +59,15 @@ function buildRagQuery(history = []) {
     .slice(-1200);
 }
 
+const _ragCache = new Map();
+const RAG_CACHE_TTL = 30_000;
+
 async function fetchRagContext(agentId, query) {
   if (!RAG_URL || !INTERNAL_SECRET) return "";
+
+  const cached = _ragCache.get(agentId);
+  if (cached && Date.now() - cached.ts < RAG_CACHE_TTL) return cached.ctx;
+
   try {
     const res = await axios.post(
       RAG_URL,
@@ -70,10 +77,12 @@ async function fetchRagContext(agentId, query) {
           "Content-Type": "application/json",
           "x-internal-secret": INTERNAL_SECRET,
         },
-        timeout: 5000,
+        timeout: 1500,
       },
     );
-    return res.data?.context ?? "";
+    const ctx = res.data?.context ?? "";
+    _ragCache.set(agentId, { ctx, ts: Date.now() });
+    return ctx;
   } catch (err) {
     const status = err?.response?.status;
     const data = err?.response?.data;
@@ -93,9 +102,11 @@ async function fetchRagContext(agentId, query) {
   }
 }
 
-async function buildGeminiPayload({ agentId, history, language, config }) {
+async function buildGeminiPayload({ agentId, history, language, config, ragContext }) {
   const lastMessage = history[history.length - 1]?.content ?? "";
-  const ragContext = await fetchRagContext(agentId, buildRagQuery(history) || lastMessage);
+  if (ragContext === undefined) {
+    ragContext = await fetchRagContext(agentId, buildRagQuery(history) || lastMessage);
+  }
 
   const langNames = {
     "ml-IN": "Malayalam",

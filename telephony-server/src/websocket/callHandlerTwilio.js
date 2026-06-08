@@ -32,7 +32,7 @@ const MIN_UTTERANCE_MS = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
 const BARGE_IN_THRESHOLD = intEnv("TWILIO_BARGE_IN_THRESHOLD", 300);
-const TTS_MIN_CHARS = intEnv("TWILIO_TTS_MIN_CHARS", 45);
+const TTS_MIN_CHARS = intEnv("TWILIO_TTS_MIN_CHARS", 20);
 const TTS_MAX_CHARS = intEnv("TWILIO_TTS_MAX_CHARS", 130);
 const TWILIO_FRAME_MS = 20;
 const TWILIO_SAMPLE_RATE = 8000;
@@ -54,7 +54,6 @@ const supabase = createClient(
 // ── mulaw codec ───────────────────────────────────────────────────────────────
 
 const MULAW_BIAS = 0x84;
-const MULAW_CLIP = 32635;
 
 function mulawToLinear(mulaw) {
   mulaw = ~mulaw;
@@ -122,7 +121,7 @@ export function handleCall(ws, req) {
   let callStart = Date.now();
   let callEnded = false;
   let markCounter = 0;
-  let pendingMark = null;
+  const pendingMarks = new Set();
   let initialGreetingPending = false;
   let initialGreetingSent = false;
   let streamingStt = null;
@@ -215,11 +214,13 @@ export function handleCall(ws, req) {
   // Google TTS returns raw mulaw 8kHz — send directly, no conversion needed.
 
   function markBotAudioDone(markName, reason) {
+    if (markName) pendingMarks.delete(markName);
+    // Only transition to listening when all marks are received
+    if (markName && pendingMarks.size > 0) return;
     if (botAudioTimer) clearTimeout(botAudioTimer);
     botAudioTimer = null;
-    if (markName && pendingMark && markName !== pendingMark) return;
     isBotSpeaking = false;
-    pendingMark = null;
+    pendingMarks.clear();
     if (initialGreetingPending) initialGreetingPending = false;
     console.log(`[twilio] now listening (${reason})`);
     if (STREAMING_PIPELINE && STREAMING_STT && !callEnded) {
@@ -240,24 +241,23 @@ export function handleCall(ws, req) {
           markBotAudioDone(markName, "mark-timeout");
         }
       },
-      Math.max(playbackMs + 1000, 1500),
+      Math.max(playbackMs + 500, 800),
     );
   }
 
   function sendMulawAudio(mulawBuf) {
     if (!streamSid || ws.readyState !== 1 || !mulawBuf?.length) return;
     if (STREAMING_PIPELINE && STREAMING_STT && streamingStt) {
-      streamingStt.close();
-      streamingStt = null;
       streamingSttPausedForBot = true;
       console.log("[twilio/stt/stream] paused for bot audio");
     }
     isBotSpeaking = true;
     const markName = `bot-${++markCounter}`;
-    pendingMark = markName;
+    pendingMarks.add(markName);
 
-    chunkBuffer(mulawBuf, 160).forEach((chunk) => {
-      if (ws.readyState !== 1) return;
+    const chunks = chunkBuffer(mulawBuf, 640);
+    for (const chunk of chunks) {
+      if (ws.readyState !== 1) break;
       ws.send(
         JSON.stringify({
           event: "media",
@@ -265,7 +265,7 @@ export function handleCall(ws, req) {
           media: { payload: chunk.toString("base64") },
         }),
       );
-    });
+    }
     ws.send(
       JSON.stringify({
         event: "mark",
@@ -581,6 +581,7 @@ export function handleCall(ws, req) {
     if (isProcessing || !agent) return;
     isProcessing = true;
     const t0 = Date.now();
+    const activeLang = detectedLang ?? agent?.language ?? lang;
     console.log(
       `[twilio/pipeline] start, provider=${voiceProvider}, bufSize=${sttBuffer.length}`,
     );
@@ -611,9 +612,6 @@ export function handleCall(ws, req) {
 
       await runReplyPipeline(transcript, false);
       console.log(`[twilio/pipeline] stt+reply done in ${Date.now() - t0}ms`);
-      return;
-
-      // 3. TTS — Google returns raw mulaw 8kHz, send directly
     } catch (err) {
       console.error("[twilio/pipeline] ERROR:", err?.message);
       try {
@@ -733,11 +731,10 @@ export function handleCall(ws, req) {
         if (!streamSid || !agent) break;
         if (initialGreetingPending && !initialGreetingSent) break;
 
-        // Decode incoming mulaw 8kHz -> PCM 16kHz for STT
+        // Decode incoming mulaw 8kHz -> PCM for VAD + STT
         const mulawBuf = Buffer.from(payload, "base64");
         const pcm8k = decodeMulaw(mulawBuf);
-        const pcm16k = upsample8kTo16k(pcm8k);
-        const rms = getRMS(pcm16k);
+        const rms = getRMS(pcm8k);
         let sentToStreamingStt = false;
 
         // Barge-in: caller speech should immediately stop bot playback.
@@ -757,15 +754,23 @@ export function handleCall(ws, req) {
               sttStream?.sendTwilioMulaw(mulawBuf);
               utteranceMs += TWILIO_FRAME_MS;
             } else {
-              appendSpeechFrame(mulawBuf, pcm16k);
+              appendSpeechFrame(mulawBuf, upsample8kTo16k(pcm8k));
             }
             armVadTimer();
           }
           break;
         }
 
-        // Drop frames while the pipeline is busy producing the next answer.
-        if (isProcessing) break;
+        // Buffer speech frames even while processing so we don't lose utterances
+        if (isProcessing) {
+          if (STREAMING_PIPELINE && STREAMING_STT) {
+            const sttStream = await ensureStreamingStt();
+            if (sttStream && !streamingSttPausedForBot) {
+              sttStream.sendTwilioMulaw(mulawBuf);
+            }
+          }
+          break;
+        }
 
         if (STREAMING_PIPELINE && STREAMING_STT) {
           const sttStream = await ensureStreamingStt();
@@ -804,10 +809,10 @@ export function handleCall(ws, req) {
             console.log(`[twilio/vad] speech started, rms=${rms.toFixed(0)}`);
           }
           silenceMs = 0;
-          appendSpeechFrame(mulawBuf, pcm16k);
+          appendSpeechFrame(mulawBuf, upsample8kTo16k(pcm8k));
           armVadTimer();
         } else if (isSpeaking) {
-          appendSpeechFrame(mulawBuf, pcm16k);
+          appendSpeechFrame(mulawBuf, upsample8kTo16k(pcm8k));
           silenceMs += TWILIO_FRAME_MS;
           if (silenceMs >= VAD_SILENCE_DURATION) {
             await finishUtterance(`silence-${silenceMs}ms`);
@@ -823,10 +828,7 @@ export function handleCall(ws, req) {
         break;
 
       case "mark":
-        if (
-          msg.mark?.name === pendingMark ||
-          msg.mark?.name?.startsWith("bot-")
-        )
+        if (msg.mark?.name?.startsWith("bot-"))
           markBotAudioDone(msg.mark?.name, `mark:${msg.mark?.name}`);
         break;
 

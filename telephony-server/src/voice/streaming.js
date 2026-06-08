@@ -1,15 +1,37 @@
 import WebSocket from "ws";
+import speech from "@google-cloud/speech";
+import textToSpeech from "@google-cloud/text-to-speech";
 
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
-function googleCredentials() {
+const _parsedGoogleCredentials = (() => {
   if (!GOOGLE_SERVICE_ACCOUNT_JSON) return undefined;
   const parsed = JSON.parse(GOOGLE_SERVICE_ACCOUNT_JSON);
   return {
     client_email: parsed.client_email,
     private_key: parsed.private_key?.replace(/\\n/g, "\n"),
   };
+})();
+
+function googleCredentials() {
+  return _parsedGoogleCredentials;
+}
+
+let _speechClient = null;
+function getSpeechClient() {
+  if (!_speechClient) {
+    _speechClient = new speech.SpeechClient({ credentials: googleCredentials() });
+  }
+  return _speechClient;
+}
+
+let _ttsClient = null;
+function getTextToSpeechClient() {
+  if (!_ttsClient) {
+    _ttsClient = new textToSpeech.v1.TextToSpeechClient({ credentials: googleCredentials() });
+  }
+  return _ttsClient;
 }
 
 function mulawToLinear(mulaw) {
@@ -91,10 +113,7 @@ export async function createStreamingStt({
   onError,
 }) {
   if (provider === "google") {
-    const speech = await import("@google-cloud/speech");
-    const client = new speech.SpeechClient({
-      credentials: googleCredentials(),
-    });
+    const client = getSpeechClient();
     let closed = false;
     const stream = client
       .streamingRecognize({
@@ -210,10 +229,7 @@ export async function createStreamingTts({
   onError,
 }) {
   if (provider === "google") {
-    const textToSpeech = await import("@google-cloud/text-to-speech");
-    const client = new textToSpeech.v1.TextToSpeechClient({
-      credentials: googleCredentials(),
-    });
+    const client = getTextToSpeechClient();
     const streamingVoice = resolveGoogleStreamingVoice(languageCode, voiceId);
     console.log(`[google/tts/stream] voice=${streamingVoice}`);
 
@@ -290,7 +306,7 @@ export async function createStreamingTts({
       JSON.stringify({
         type: "config",
         data: {
-          speaker: voiceId ?? process.env.SARVAM_DEFAULT_VOICE ?? "anand",
+          speaker: voiceId,
           target_language_code: languageCode,
           pace,
           min_buffer_size: 35,
