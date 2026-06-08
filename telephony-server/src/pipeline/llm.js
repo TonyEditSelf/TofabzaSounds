@@ -22,6 +22,10 @@ const DEFAULT_MODEL =
   LLM_MODELS["gemini-flash"];
 const RAG_URL =
   NEXTJS_URL && `${NEXTJS_URL.replace(/\/$/, "")}/api/rag/query`;
+const RAG_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.RAG_TIMEOUT_MS ?? "6000", 10) || 6000,
+);
 
 function geminiUrl(model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -77,11 +81,12 @@ async function fetchRagContext(agentId, query) {
           "Content-Type": "application/json",
           "x-internal-secret": INTERNAL_SECRET,
         },
-        timeout: 1500,
+        timeout: RAG_TIMEOUT_MS,
       },
     );
     const ctx = res.data?.context ?? "";
     _ragCache.set(agentId, { ctx, ts: Date.now() });
+    if (ctx) console.log(`[rag] fetched context chars=${ctx.length}`);
     return ctx;
   } catch (err) {
     const status = err?.response?.status;
