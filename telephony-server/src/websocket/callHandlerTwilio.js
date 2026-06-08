@@ -212,6 +212,7 @@ export function handleCall(ws, req) {
   // Google TTS returns raw mulaw 8kHz — send directly, no conversion needed.
 
   function markBotAudioDone(markName, reason) {
+    if (!isBotSpeaking && pendingMarks.size === 0) return; // already listening
     if (markName) pendingMarks.delete(markName);
     // Only transition to listening when all marks are received
     if (markName && pendingMarks.size > 0) return;
@@ -228,14 +229,15 @@ export function handleCall(ws, req) {
     }
   }
 
-  function armBotAudioWatchdog(markName, byteLength) {
+  function armBotAudioWatchdog(byteLength) {
     if (botAudioTimer) clearTimeout(botAudioTimer);
     const playbackMs = Math.ceil((byteLength / TWILIO_SAMPLE_RATE) * 1000);
     botAudioTimer = setTimeout(
       () => {
-        if (pendingMarks.has(markName)) {
-          console.warn(`[twilio] mark timeout, listening anyway: ${markName}`);
-          markBotAudioDone(markName, "mark-timeout");
+        if (pendingMarks.size > 0) {
+          console.warn(`[twilio] mark timeout, forcing listen (${pendingMarks.size} marks pending)`);
+          pendingMarks.clear();
+          markBotAudioDone(null, "mark-timeout");
         }
       },
       Math.max(playbackMs + 500, 800),
@@ -244,7 +246,7 @@ export function handleCall(ws, req) {
 
   function sendMulawAudio(mulawBuf) {
     if (!streamSid || ws.readyState !== 1 || !mulawBuf?.length) return;
-    if (STREAMING_PIPELINE && STREAMING_STT && streamingStt) {
+    if (STREAMING_PIPELINE && STREAMING_STT && streamingStt && !streamingSttPausedForBot) {
       streamingSttPausedForBot = true;
       console.log("[twilio/stt/stream] paused for bot audio");
     }
@@ -270,7 +272,7 @@ export function handleCall(ws, req) {
         mark: { name: markName },
       }),
     );
-    armBotAudioWatchdog(markName, mulawBuf.length);
+    armBotAudioWatchdog(mulawBuf.length);
     console.log(`[twilio] sent audio, waiting for mark: ${markName}`);
   }
 
