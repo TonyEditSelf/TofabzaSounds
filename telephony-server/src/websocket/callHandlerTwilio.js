@@ -685,7 +685,7 @@ export function handleCall(ws, req) {
         try {
           const greetingMulaw = await tts({
             text: agent.config?.greeting ?? "",
-            languageCode: activeLang,
+            languageCode: detectedLang ?? agent.language ?? lang,
             voiceId: agent.config?.voice_id,
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
