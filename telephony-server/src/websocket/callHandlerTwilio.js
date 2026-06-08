@@ -164,7 +164,7 @@ export function handleCall(ws, req) {
     if (!STREAMING_PIPELINE || !STREAMING_STT || streamingStt) return;
     streamingStt = await createStreamingStt({
       provider: voiceProvider,
-      languageCode: activeLang,
+      languageCode: agent.language ?? lang,
       onInterimTranscript: (text, lang) => {
         latestStreamingInterim = text?.trim() ?? "";
         if (lang && lang !== detectedLang) {
