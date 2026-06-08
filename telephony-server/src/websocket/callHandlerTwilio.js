@@ -27,14 +27,15 @@ function intEnv(name, fallback) {
 }
 
 const VAD_SILENCE_THRESHOLD = intEnv("TWILIO_VAD_THRESHOLD", 180);
-const VAD_SILENCE_DURATION  = intEnv("TWILIO_VAD_SILENCE_MS", 700);
-const MIN_UTTERANCE_MS      = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
-const MAX_CALL_DURATION_MS  = (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
-const BARGE_IN_THRESHOLD    = intEnv("TWILIO_BARGE_IN_THRESHOLD", 300);
-const TTS_MIN_CHARS         = intEnv("TWILIO_TTS_MIN_CHARS", 45);
-const TTS_MAX_CHARS         = intEnv("TWILIO_TTS_MAX_CHARS", 130);
-const TWILIO_FRAME_MS       = 20;
-const TWILIO_SAMPLE_RATE    = 8000;
+const VAD_SILENCE_DURATION = intEnv("TWILIO_VAD_SILENCE_MS", 700);
+const MIN_UTTERANCE_MS = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
+const MAX_CALL_DURATION_MS =
+  (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
+const BARGE_IN_THRESHOLD = intEnv("TWILIO_BARGE_IN_THRESHOLD", 300);
+const TTS_MIN_CHARS = intEnv("TWILIO_TTS_MIN_CHARS", 45);
+const TTS_MAX_CHARS = intEnv("TWILIO_TTS_MAX_CHARS", 130);
+const TWILIO_FRAME_MS = 20;
+const TWILIO_SAMPLE_RATE = 8000;
 const STREAMING_PIPELINE =
   (process.env.TWILIO_STREAMING_PIPELINE ?? "false").toLowerCase() === "true";
 const STREAMING_STT =
@@ -47,7 +48,7 @@ const STREAMING_TTS =
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { realtime: { transport: ws } }
+  { realtime: { transport: ws } },
 );
 
 // ── mulaw codec ───────────────────────────────────────────────────────────────
@@ -57,8 +58,8 @@ const MULAW_CLIP = 32635;
 
 function mulawToLinear(mulaw) {
   mulaw = ~mulaw;
-  const sign     = mulaw & 0x80;
-  const exp      = (mulaw >> 4) & 0x07;
+  const sign = mulaw & 0x80;
+  const exp = (mulaw >> 4) & 0x07;
   const mantissa = mulaw & 0x0f;
   let sample = ((mantissa << 3) + MULAW_BIAS) << exp;
   return sign ? MULAW_BIAS - sample : sample - MULAW_BIAS;
@@ -99,29 +100,29 @@ export function handleCall(ws, req) {
 
   const url = new URL(req.url, "wss://localhost");
   let agentId = url.searchParams.get("agent_id");
-  const lang  = url.searchParams.get("lang") ?? "ml-IN";
+  const lang = url.searchParams.get("lang") ?? "ml-IN";
 
-  let streamSid    = null;
-  let callSid      = null;
-  let callLogId    = null;
-  let agent        = null;
-  let history      = [];
-  let pcmChunks    = [];   // 16kHz PCM accumulated for non-Google STT
-  let sttChunks    = [];   // provider-native audio accumulated during speech
-  let utteranceMs  = 0;
-  let silenceMs    = 0;
-  let isSpeaking   = false;
+  let streamSid = null;
+  let callSid = null;
+  let callLogId = null;
+  let agent = null;
+  let history = [];
+  let pcmChunks = []; // 16kHz PCM accumulated for non-Google STT
+  let sttChunks = []; // provider-native audio accumulated during speech
+  let utteranceMs = 0;
+  let silenceMs = 0;
+  let isSpeaking = false;
   let isProcessing = false;
   let isBotSpeaking = false;
-  let callTimeout  = null;
-  let vadTimer     = null;
+  let callTimeout = null;
+  let vadTimer = null;
   let botAudioTimer = null;
   let activeReplyAbort = null;
   let playbackGeneration = 0;
-  let callStart    = Date.now();
-  let callEnded    = false;
-  let markCounter  = 0;
-  let pendingMark  = null;
+  let callStart = Date.now();
+  let callEnded = false;
+  let markCounter = 0;
+  let pendingMark = null;
   let initialGreetingPending = false;
   let initialGreetingSent = false;
   let streamingStt = null;
@@ -141,7 +142,10 @@ export function handleCall(ws, req) {
   // ── Load agent ──────────────────────────────────────────────────────────────
 
   async function loadAgent() {
-    if (!agentId) { ws.close(1008, "No agent_id"); return; }
+    if (!agentId) {
+      ws.close(1008, "No agent_id");
+      return;
+    }
     const { data, error } = await supabase
       .from("agents")
       .select("id, name, status, language, config, client_id")
@@ -180,7 +184,9 @@ export function handleCall(ws, req) {
         streamingStt = null;
       },
     });
-    console.log(`[twilio] streaming pipeline enabled provider=${voiceProvider}`);
+    console.log(
+      `[twilio] streaming pipeline enabled provider=${voiceProvider}`,
+    );
   }
 
   async function ensureStreamingStt() {
@@ -204,7 +210,7 @@ export function handleCall(ws, req) {
     botAudioTimer = null;
     if (markName && pendingMark && markName !== pendingMark) return;
     isBotSpeaking = false;
-    pendingMark   = null;
+    pendingMark = null;
     if (initialGreetingPending) initialGreetingPending = false;
     console.log(`[twilio] now listening (${reason})`);
     if (STREAMING_PIPELINE && STREAMING_STT && !callEnded) {
@@ -218,12 +224,15 @@ export function handleCall(ws, req) {
   function armBotAudioWatchdog(markName, byteLength) {
     if (botAudioTimer) clearTimeout(botAudioTimer);
     const playbackMs = Math.ceil((byteLength / TWILIO_SAMPLE_RATE) * 1000);
-    botAudioTimer = setTimeout(() => {
-      if (pendingMark === markName) {
-        console.warn(`[twilio] mark timeout, listening anyway: ${markName}`);
-        markBotAudioDone(markName, "mark-timeout");
-      }
-    }, Math.max(playbackMs + 1000, 1500));
+    botAudioTimer = setTimeout(
+      () => {
+        if (pendingMark === markName) {
+          console.warn(`[twilio] mark timeout, listening anyway: ${markName}`);
+          markBotAudioDone(markName, "mark-timeout");
+        }
+      },
+      Math.max(playbackMs + 1000, 1500),
+    );
   }
 
   function sendMulawAudio(mulawBuf) {
@@ -240,17 +249,21 @@ export function handleCall(ws, req) {
 
     chunkBuffer(mulawBuf, 160).forEach((chunk) => {
       if (ws.readyState !== 1) return;
-      ws.send(JSON.stringify({
-        event: "media",
-        streamSid,
-        media: { payload: chunk.toString("base64") },
-      }));
+      ws.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: chunk.toString("base64") },
+        }),
+      );
     });
-    ws.send(JSON.stringify({
-      event: "mark",
-      streamSid,
-      mark: { name: markName },
-    }));
+    ws.send(
+      JSON.stringify({
+        event: "mark",
+        streamSid,
+        mark: { name: markName },
+      }),
+    );
     armBotAudioWatchdog(markName, mulawBuf.length);
     console.log(`[twilio] sent audio, waiting for mark: ${markName}`);
   }
@@ -290,7 +303,9 @@ export function handleCall(ws, req) {
         const transcript = latestStreamingInterim?.trim();
         if (!transcript || isProcessing || !agent) return;
         latestStreamingInterim = "";
-        console.warn(`[twilio/stt/fallback] using interim "${transcript.slice(0, 80)}"`);
+        console.warn(
+          `[twilio/stt/fallback] using interim "${transcript.slice(0, 80)}"`,
+        );
         await runReplyPipeline(transcript);
       }, 900);
       pcmChunks = [];
@@ -305,11 +320,11 @@ export function handleCall(ws, req) {
 
     const sttBuffer = Buffer.concat(sttChunks.length ? sttChunks : pcmChunks);
     const durationMs = utteranceMs;
-    pcmChunks   = [];
-    sttChunks   = [];
+    pcmChunks = [];
+    sttChunks = [];
     utteranceMs = 0;
-    silenceMs   = 0;
-    isSpeaking  = false;
+    silenceMs = 0;
+    isSpeaking = false;
 
     if (durationMs < MIN_UTTERANCE_MS) {
       console.log(`[twilio/vad] ignored short utterance ${durationMs}ms`);
@@ -383,35 +398,87 @@ export function handleCall(ws, req) {
       let ttsStream = null;
       let ttsStreamFailed = false;
       let ttsQueue = Promise.resolve();
+      let firstChunkSent = false; // ← NEW
 
       try {
-        ttsStream = STREAMING_PIPELINE && STREAMING_TTS
-          ? await createStreamingTts({
-              provider: voiceProvider,
+        ttsStream =
+          STREAMING_PIPELINE && STREAMING_TTS
+            ? await createStreamingTts({
+                provider: voiceProvider,
+                languageCode: agent.language ?? lang,
+                voiceId: agent.config?.voice_id,
+                pace: agent.config?.pace ?? 1.0,
+                onMulawAudio: (mulawBuf) => {
+                  if (
+                    replyAbort.signal.aborted ||
+                    generation !== playbackGeneration
+                  )
+                    return;
+                  sentAnyAudio = true;
+                  console.log(
+                    `[twilio/tts/stream] audio bytes=${mulawBuf.length}`,
+                  );
+                  sendMulawAudio(mulawBuf);
+                },
+                onDone: () => console.log("[twilio/tts/stream] done"),
+                onError: (err) => {
+                  ttsStreamFailed = true;
+                  console.error("[twilio/tts/stream] ERROR:", err?.message);
+                },
+              })
+            : null;
+        if (ttsStream)
+          console.log(`[twilio/tts/stream] started provider=${voiceProvider}`);
+      } catch (err) {
+        console.warn(
+          "[twilio/tts/stream] unavailable, using chunked batch:",
+          err?.message,
+        );
+      }
+
+      // ── NEW: batch-first helper ───────────────────────────────────────────────
+      // Fire the first TTS chunk via REST for fast TTFB, then hand off to stream.
+      const sendFirstChunkBatch = (text) => {
+        if (firstChunkSent || !text?.trim()) return;
+        firstChunkSent = true;
+        const chunkText = text.trim();
+        ttsHandled = true;
+        ttsQueue = ttsQueue.then(async () => {
+          if (replyAbort.signal.aborted || generation !== playbackGeneration)
+            return;
+          console.log(`[twilio/tts/first-batch] chars=${chunkText.length}`);
+          try {
+            const mulawBuf = await tts({
+              text: chunkText,
               languageCode: agent.language ?? lang,
               voiceId: agent.config?.voice_id,
               pace: agent.config?.pace ?? 1.0,
-              onMulawAudio: (mulawBuf) => {
-                if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
-                sentAnyAudio = true;
-                console.log(`[twilio/tts/stream] audio bytes=${mulawBuf.length}`);
-                sendMulawAudio(mulawBuf);
-              },
-              onDone: () => console.log("[twilio/tts/stream] done"),
-              onError: (err) => {
-                ttsStreamFailed = true;
-                console.error("[twilio/tts/stream] ERROR:", err?.message);
-              },
-            })
-          : null;
-        if (ttsStream) console.log(`[twilio/tts/stream] started provider=${voiceProvider}`);
-      } catch (err) {
-        console.warn("[twilio/tts/stream] unavailable, using chunked batch:", err?.message);
-      }
+              sampleRate: TWILIO_SAMPLE_RATE,
+              audioEncoding: "MULAW",
+            });
+            if (replyAbort.signal.aborted || generation !== playbackGeneration)
+              return;
+            sentAnyAudio = true;
+            sendMulawAudio(mulawBuf);
+          } catch (err) {
+            console.warn("[twilio/tts/first-batch] failed:", err?.message);
+            firstChunkSent = false; // allow retry via normal path
+          }
+        });
+      };
+      // ─────────────────────────────────────────────────────────────────────────
 
       const enqueueTts = (text) => {
         if (!text?.trim()) return;
         const chunkText = text.trim();
+
+        // ── NEW: first chunk always goes batch for fast TTFB ─────────────────
+        if (!firstChunkSent && STREAMING_PIPELINE && STREAMING_TTS) {
+          sendFirstChunkBatch(chunkText);
+          return;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         if (ttsStream && !ttsStreamFailed && !ttsStream.isClosed?.()) {
           const accepted = ttsStream.sendText(chunkText);
           if (accepted !== false) {
@@ -433,7 +500,8 @@ export function handleCall(ws, req) {
         }
         ttsHandled = true;
         ttsQueue = ttsQueue.then(async () => {
-          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          if (replyAbort.signal.aborted || generation !== playbackGeneration)
+            return;
           console.log(`[twilio/tts/batch] chunk chars=${chunkText.length}`);
           const mulawBuf = await tts({
             text: chunkText,
@@ -443,7 +511,8 @@ export function handleCall(ws, req) {
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
           });
-          if (replyAbort.signal.aborted || generation !== playbackGeneration) return;
+          if (replyAbort.signal.aborted || generation !== playbackGeneration)
+            return;
           sentAnyAudio = true;
           sendMulawAudio(mulawBuf);
         });
@@ -477,7 +546,10 @@ export function handleCall(ws, req) {
           console.log("[twilio/llm] streamed reply aborted");
           return;
         }
-        console.warn("[twilio/llm] streaming failed, falling back:", err?.message);
+        console.warn(
+          "[twilio/llm] streaming failed, falling back:",
+          err?.message,
+        );
       }
 
       if (!reply?.trim() && streamedReplyText.trim()) {
@@ -518,7 +590,9 @@ export function handleCall(ws, req) {
     if (isProcessing || !agent) return;
     isProcessing = true;
     const t0 = Date.now();
-    console.log(`[twilio/pipeline] start, provider=${voiceProvider}, bufSize=${sttBuffer.length}`);
+    console.log(
+      `[twilio/pipeline] start, provider=${voiceProvider}, bufSize=${sttBuffer.length}`,
+    );
 
     try {
       if (isBotSpeaking) sendClear();
@@ -552,12 +626,13 @@ export function handleCall(ws, req) {
     } catch (err) {
       console.error("[twilio/pipeline] ERROR:", err?.message);
       try {
-        const msg = agent?.config?.fallback_message ?? "I am sorry, please try again.";
+        const msg =
+          agent?.config?.fallback_message ?? "I am sorry, please try again.";
         const mulawBuf = await tts({
-          text:         msg,
+          text: msg,
           languageCode: agent?.language ?? lang,
-          voiceId:      agent?.config?.voice_id,
-          sampleRate:   TWILIO_SAMPLE_RATE,
+          voiceId: agent?.config?.voice_id,
+          sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
         });
         sendMulawAudio(mulawBuf);
@@ -577,18 +652,24 @@ export function handleCall(ws, req) {
 
   ws.on("message", async (data) => {
     let msg;
-    try { msg = JSON.parse(data); } catch { return; }
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return;
+    }
 
     switch (msg.event) {
-
       case "connected":
         break;
 
       case "start": {
         streamSid = msg.streamSid ?? msg.start?.streamSid;
-        callSid   = msg.start?.callSid;
-        console.log("[twilio] customParameters:", JSON.stringify(msg.start?.customParameters));
-        agentId   = agentId ?? msg.start?.customParameters?.agent_id;
+        callSid = msg.start?.callSid;
+        console.log(
+          "[twilio] customParameters:",
+          JSON.stringify(msg.start?.customParameters),
+        );
+        agentId = agentId ?? msg.start?.customParameters?.agent_id;
         callStart = Date.now();
 
         await loadAgent();
@@ -601,9 +682,9 @@ export function handleCall(ws, req) {
         callLogId = await createCallLog(supabase, {
           callSid,
           agentId,
-          clientId:     agent.client_id,
+          clientId: agent.client_id,
           callerNumber: msg.start?.customParameters?.from ?? null,
-          direction:    "inbound",
+          direction: "inbound",
         });
 
         callTimeout = setTimeout(() => {
@@ -615,10 +696,10 @@ export function handleCall(ws, req) {
         // Play greeting — Google TTS returns raw mulaw 8kHz, send directly
         try {
           const greetingMulaw = await tts({
-            text:         agent.config?.greeting ?? "",
+            text: agent.config?.greeting ?? "",
             languageCode: agent.language ?? lang,
-            voiceId:      agent.config?.voice_id,
-            sampleRate:   TWILIO_SAMPLE_RATE,
+            voiceId: agent.config?.voice_id,
+            sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
           });
           isBotSpeaking = true;
@@ -630,7 +711,10 @@ export function handleCall(ws, req) {
           initialGreetingSent = false;
           isBotSpeaking = false;
           ensureStreamingStt().catch((sttErr) => {
-            console.error("[twilio/stt/stream] start after greeting failure failed:", sttErr?.message);
+            console.error(
+              "[twilio/stt/stream] start after greeting failure failed:",
+              sttErr?.message,
+            );
           });
         }
         break;
@@ -644,15 +728,17 @@ export function handleCall(ws, req) {
 
         // Decode incoming mulaw 8kHz -> PCM 16kHz for STT
         const mulawBuf = Buffer.from(payload, "base64");
-        const pcm8k    = decodeMulaw(mulawBuf);
-        const pcm16k   = upsample8kTo16k(pcm8k);
+        const pcm8k = decodeMulaw(mulawBuf);
+        const pcm16k = upsample8kTo16k(pcm8k);
         const rms = getRMS(pcm16k);
         let sentToStreamingStt = false;
 
         // Barge-in: caller speech should immediately stop bot playback.
         if (isBotSpeaking) {
           if (rms > BARGE_IN_THRESHOLD) {
-            console.log(`[twilio/barge-in] caller interrupted, rms=${rms.toFixed(0)}`);
+            console.log(
+              `[twilio/barge-in] caller interrupted, rms=${rms.toFixed(0)}`,
+            );
             sendClear();
             pcmChunks = [];
             sttChunks = [];
@@ -698,7 +784,8 @@ export function handleCall(ws, req) {
               armVadTimer();
             }
           }
-          if (!sentToStreamingStt) console.warn("[twilio/stt/stream] frame not sent");
+          if (!sentToStreamingStt)
+            console.warn("[twilio/stt/stream] frame not sent");
           break;
         }
 
@@ -729,7 +816,10 @@ export function handleCall(ws, req) {
         break;
 
       case "mark":
-        if (msg.mark?.name === pendingMark || msg.mark?.name?.startsWith("bot-"))
+        if (
+          msg.mark?.name === pendingMark ||
+          msg.mark?.name?.startsWith("bot-")
+        )
           markBotAudioDone(msg.mark?.name, `mark:${msg.mark?.name}`);
         break;
 
@@ -746,13 +836,13 @@ export function handleCall(ws, req) {
     callEnded = true;
 
     if (callTimeout) clearTimeout(callTimeout);
-    if (vadTimer)    clearTimeout(vadTimer);
+    if (vadTimer) clearTimeout(vadTimer);
     if (botAudioTimer) clearTimeout(botAudioTimer);
     streamingStt?.close();
     streamingStt = null;
     const duration = Math.floor((Date.now() - callStart) / 1000);
     await updateCallLog(supabase, callLogId, {
-      status:     reason === "callended" ? "completed" : reason,
+      status: reason === "callended" ? "completed" : reason,
       duration,
       transcript: history.length ? history : null,
     });
