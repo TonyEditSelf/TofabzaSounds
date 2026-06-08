@@ -446,7 +446,9 @@ export function handleCall(ws, req) {
 
       const enqueueTts = (text) => {
         if (!text?.trim()) return;
-        const chunkText = text.trim();
+        // Strip LLM stage directions like (curious, caring) and stray quotes/asterisks
+        const chunkText = text.replace(/\([^)]*\)/g, '').replace(/["*]/g, '').replace(/\s+/g, ' ').trim();
+        if (!chunkText) return;
 
         if (STREAMING_PIPELINE && STREAMING_TTS && !ttsStreamFailed) {
           ttsQueue = ttsQueue.then(async () => {
@@ -526,8 +528,8 @@ export function handleCall(ws, req) {
 
         const finalChunks = takeReadyTtsChunks(pendingText, true);
         finalChunks.chunks.forEach(enqueueTts);
-        if (ttsStream) ttsStream.flush();
         await ttsQueue;
+        if (ttsStream) ttsStream.flush();
         if (!reply?.trim() && streamedReplyText.trim()) {
           reply = streamedReplyText.trim();
         }
