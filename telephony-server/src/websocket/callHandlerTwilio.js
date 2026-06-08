@@ -27,7 +27,7 @@ function intEnv(name, fallback) {
 }
 
 const VAD_SILENCE_THRESHOLD = intEnv("TWILIO_VAD_THRESHOLD", 180);
-const VAD_SILENCE_DURATION = intEnv("TWILIO_VAD_SILENCE_MS", 700);
+const VAD_SILENCE_DURATION = intEnv("TWILIO_VAD_SILENCE_MS", 300);
 const MIN_UTTERANCE_MS = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
@@ -316,7 +316,7 @@ export function handleCall(ws, req) {
           `[twilio/stt/fallback] using interim "${transcript.slice(0, 80)}"`,
         );
         await runReplyPipeline(transcript);
-      }, 900);
+      }, 700);
       pcmChunks = [];
       sttChunks = [];
       utteranceMs = 0;
@@ -473,6 +473,7 @@ export function handleCall(ws, req) {
               pace: agent.config?.pace ?? 1.0,
               sampleRate: TWILIO_SAMPLE_RATE,
               audioEncoding: "MULAW",
+              agentConfig: agent.config,
             });
             if (replyAbort.signal.aborted || generation !== playbackGeneration)
               return;
@@ -494,6 +495,7 @@ export function handleCall(ws, req) {
             pace: agent.config?.pace ?? 1.0,
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
+            agentConfig: agent.config,
           });
           if (replyAbort.signal.aborted || generation !== playbackGeneration)
             return;
@@ -560,6 +562,7 @@ export function handleCall(ws, req) {
           pace: agent.config?.pace ?? 1.0,
           sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
+          agentConfig: agent.config,
         });
         sendMulawAudio(mulawBuf);
       }
@@ -622,6 +625,7 @@ export function handleCall(ws, req) {
           voiceId: agent?.config?.voice_id,
           sampleRate: TWILIO_SAMPLE_RATE,
           audioEncoding: "MULAW",
+          agentConfig: agent?.config,
         });
         sendMulawAudio(mulawBuf);
       } catch (_) {}
@@ -683,12 +687,27 @@ export function handleCall(ws, req) {
 
         // Play greeting — Google TTS returns raw mulaw 8kHz, send directly
         try {
+          const istHour = Number(new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Kolkata",
+            hour: "numeric",
+            hour12: false
+          }).format(new Date()));
+
+          let greetingText = "Good evening";
+          if (istHour >= 5 && istHour < 12) {
+            greetingText = "Good morning";
+          } else if (istHour >= 12 && istHour < 17) {
+            greetingText = "Good afternoon";
+          }
+
           const greetingMulaw = await tts({
-            text: agent.config?.greeting ?? "",
+            text: greetingText,
             languageCode: detectedLang ?? agent.language ?? lang,
             voiceId: agent.config?.voice_id,
+            pace: agent.config?.pace ?? 1.0,
             sampleRate: TWILIO_SAMPLE_RATE,
             audioEncoding: "MULAW",
+            agentConfig: agent.config,
           });
           isBotSpeaking = true;
           initialGreetingSent = true;

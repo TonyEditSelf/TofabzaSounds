@@ -80,7 +80,7 @@ const sarvamAxios = axios.create({
 async function sarvamTTS({
   text,
   languageCode,
-  speaker = "anand",
+  speaker,
   pace = 1.0,
   speechSampleRate = 16000,
   outputAudioCodec,
@@ -113,14 +113,8 @@ async function sarvamTTS({
 }
 
 function resolveSarvamSpeaker(voiceId) {
-  const fallback = process.env.SARVAM_DEFAULT_VOICE ?? "anand";
   if (voiceId && SARVAM_SPEAKERS.has(voiceId)) return voiceId;
-  if (voiceId) {
-    console.warn(
-      `[sarvamTTS] invalid speaker "${voiceId}", using "${fallback}"`,
-    );
-  }
-  return fallback;
+  return voiceId;
 }
 
 // ── Sarvam STT ────────────────────────────────────────────────────────────────
@@ -249,6 +243,7 @@ async function googleTTS({
   audioEncoding = "LINEAR16",
   sampleRateHertz = 16000,
 }) {
+  console.log(`[googleTTS] Calling Google TTS API with voice: ${voiceName}`);
   const token = await getGoogleAccessToken();
   const body = {
     input: { text },
@@ -338,15 +333,16 @@ export async function tts({
   pace = 1.0,
   sampleRate = 16000,
   audioEncoding,
+  agentConfig,
 }) {
   const provider = VOICE_PROVIDER;
+  const resolvedVoice = agentConfig?.voice_id ?? voiceId;
 
   if (provider === "google") {
     return googleTTS({
       text,
       languageCode,
-      voiceName:
-        voiceId ?? process.env.GOOGLE_DEFAULT_VOICE ?? "ml-IN-Wavenet-B",
+      voiceName: resolvedVoice,
       speakingRate: pace,
       audioEncoding: audioEncoding ?? "LINEAR16",
       sampleRateHertz: sampleRate,
@@ -356,7 +352,7 @@ export async function tts({
   return sarvamTTS({
     text,
     languageCode,
-    speaker: resolveSarvamSpeaker(voiceId),
+    speaker: resolveSarvamSpeaker(resolvedVoice),
     pace,
     speechSampleRate: sampleRate,
     outputAudioCodec: audioEncoding === "MULAW" ? "mulaw" : undefined,

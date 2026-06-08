@@ -1,81 +1,59 @@
-# Project Context - Tofabza Sounds
+Project Context
+Overview
+Tofabza Sounds is a Next.js 16 App Router dashboard plus a separate Node/WebSocket telephony service for AI phone agents. The dashboard manages clients, agents, campaigns, onboarding submissions, API keys, settings, knowledge bases, call logs, costs, and analytics. The Railway service handles live call audio, STT, LLM/RAG, TTS, and call-log updates.
 
-This is a Next.js 16 App Router dashboard plus a separate Railway WebSocket telephony server for AI phone agents. The app is Exotel-only now. Do not reintroduce public widget/embed routes or Plivo code.
+The Next app uses Supabase for Auth, Postgres, and Storage. Most route handlers use a service-role Supabase client after operator/session checks. Runtime telephony is provider-abstracted in lib/telephony/\*, with Exotel and Twilio partially wired; MyOperator/Plivo provider files exist but are not clearly integrated into app routes/websocket handling.
 
-## What Exists
+The voice pipeline is split: dashboard preview/API code lives in lib/sarvam/_, lib/google/_, app/api/voices/\*; live calls use Railway-only code in telephony-server/src/voice/provider.js, reading env directly and avoiding Next/server-only imports.
 
-- Dashboard/auth: `app/dashboard/*`, `app/login/page.js`, `proxy.js`, `lib/auth/requireOperator.js`.
-- Clients: CRUD, detail tabs, checklist, call-data deletion in `app/dashboard/clients/*` and `app/api/clients/[id]/delete-data/route.js`.
-- Agents: create/edit/configure agents, onboarding links, Exotel webhook display, KB upload/delete in `app/dashboard/agents/*`.
-- Campaigns: campaign CRUD, CSV/contact handling, cron launch, Exotel outbound calls, contact status APIs in `app/dashboard/campaigns/*`, `app/api/cron/campaigns/route.js`, `app/api/campaigns/[id]/*`.
-- Calls/analytics/costs: dashboard pages under `app/dashboard/calls`, `analytics`, and `costs`.
-- Voice tooling: Sarvam voices plus Google TTS preview in `app/dashboard/voice-explorer/page.js`, `lib/sarvam/*`, `lib/google/*`, `app/api/voices/google-preview/route.js`.
-- RAG/KB: upload, extraction, chunking, embeddings, and search in `lib/rag/*`, `lib/gemini/embeddings.js`, `app/api/kb/*`.
-- Email alerts: Resend helpers in `lib/email/client.js`.
-- Telephony server: separate Node service in `telephony-server/src/*`; handles Exotel AgentStream WebSocket audio, Sarvam STT/TTS, Gemini/RAG replies, and call logging.
-- Exotel protocol sample: `Agent-Stream-echobot/*` is reference-only and not part of the Next.js app.
-
-## Stack And State
-
-- Framework: Next.js 16, React 19, App Router.
-- Database/auth/storage: Supabase Postgres, Auth, and Storage.
-- Auth model: single operator. `proxy.js` protects dashboard/API paths using Supabase session and `ALLOWED_EMAIL`; API routes often use service-role clients.
-- State: SWR for server data; persisted Zustand store `tofabza-ui` for sidebar/client filter/theme.
-- Styling: mostly inline style objects plus CSS variables in `app/globals.css`; Tailwind is installed/imported but not the dominant styling approach.
-- Deploy: Next.js app on Vercel; telephony server on Railway.
-
-## Integrations And Credentials
-
-- Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-- Exotel: current telephony provider for outbound calls, inbound answer webhook, status callbacks, AgentStream WSS. Uses `EXOTEL_ACCOUNT_SID`, `EXOTEL_API_KEY`, `EXOTEL_API_TOKEN`, `EXOTEL_SUBDOMAIN`, `EXOTEL_EXOPHONE`, `RAILWAY_WS_URL`, `NEXTJS_URL`.
-- Twilio: desired future telephony provider. Add env-driven provider selection so `TELEPHONY_PROVIDER=exotel|twilio` switches outbound calls, inbound webhooks, status callbacks, and WebSocket/media handling without code edits.
-- Sarvam: STT/TTS and voice metadata. Uses `SARVAM_API_KEY`, optional `SARVAM_API_BASE_URL`, timeout/default settings.
-- Gemini: embeddings and call LLM. Uses `GEMINI_API_KEY`; models also come from settings/defaults.
-- Google Cloud TTS: dashboard voice preview. Uses `GOOGLE_TTS_API_KEY` plus settings fallback keys in `lib/settings.js`.
-- Resend: cost/campaign/circuit emails. Uses `RESEND_API_KEY`, `RESEND_FROM_ADDRESS`, `OPERATOR_EMAIL`.
-- Upstash: optional rate limiting in `proxy.js`. Uses `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`; disabled if missing.
-
-## Core Data Model
-
-- `clients`: client records; referenced by agents, campaigns, call logs, KBs.
-- `agents`: `client_id`, `name`, `type`, `status`, `language`, `voice_id`, `config`. `config` stores prompt, greeting, facility type, Exotel number, fallback number, LLM/voice settings.
-- `campaigns`: `client_id`, `agent_id`, `name`, `status`, `type`, `scheduled_at`, `config`.
-- `contacts`: campaign contacts used by launch/status APIs; fields include `campaign_id`, `phone`, `name`, `status`, `call_sid`, `called_at`.
-- `campaign_contacts`: legacy/alternate contact table still touched by campaign detail UI. This must be reconciled with `contacts`.
-- `call_logs`: call lifecycle records: `call_sid`, `agent_id`, `client_id`, `campaign_id`, `caller_number`, `direction`, `status`, `duration_seconds`, `total_cost_inr`, `transcript`, timestamps.
-- `knowledge_bases`: KB owner records. Active owner type is `agent`.
-- `kb_chunks`: KB content chunks with embeddings; queried through Supabase RPC `match_chunks`.
-- `settings`: key/value config. Sensitive values are encrypted as `iv:tag:ciphertext`.
-- `api_keys`: stores `key_hash` and `key_prefix`, never raw keys.
-- `onboarding_submissions`: agent onboarding form data and uploaded file metadata.
-- `prompt_templates`: form/prompt templates by facility type.
-- `voices`: Sarvam voice records; Google voices are static in `lib/google/voices.js`.
-
-No migration files were found that prove FK cascade rules or RLS state. Treat schema above as inferred from code usage.
-
-## Critical Runtime Flows
-
-- Inbound Exotel: Exotel calls `app/api/webhooks/exotel/[agent_id]/route.js`, which returns WSS config pointing to Railway `/ws/call?agent_id=...`.
-- Outbound campaign: `app/api/campaigns/[id]/launch/route.js` loads pending contacts, calls Exotel, inserts `call_logs`, updates contacts with `call_sid`, then marks campaign complete.
-- Status callback: `app/api/webhooks/exotel/status/route.js` updates `call_logs` and matching contacts.
-- Live call pipeline: Railway receives Exotel events, buffers PCM media, VAD detects silence, Sarvam STT transcribes, Gemini/RAG responds, Sarvam TTS synthesizes, PCM is streamed back.
-- KB flow: upload file, extract text, chunk, embed with Gemini, store in `kb_chunks`, query through `match_chunks`.
-
-## Known Blockers
-
-1. Campaign contacts are split between `contacts` and `campaign_contacts`; choose one table and update upload/read/launch/status consistently.
-2. Exotel status callback auth may reject real callbacks because route expects `x-internal-secret`, while Exotel callback setup may not send that header.
-3. Audio format is inconsistent: Exotel path declares 16 kHz PCM, but Sarvam TTS currently requests 8 kHz WAV and sends stripped PCM without upsampling.
-4. Google TTS settings exist in `lib/settings.js`, but the settings UI does not fully expose Google credential/default fields. Desired behavior: `VOICE_PROVIDER=google|sarvam` or equivalent env/settings switch controls preview and runtime TTS/STT provider selection.
-5. Several CSS variables are widely used but not globally defined, especially `--border`, `--surface-2`, `--surface-3`, `--ink-500`, `--ink-300`, `--emerald-600`.
-6. Root page/metadata still look like create-next-app defaults.
-
-## Build Priorities
-
-1. Fix campaign contact table drift.
-2. Complete Google TTS settings/runtime wiring, including an env-driven provider switch between Sarvam and Google for voice preview and live runtime audio.
-3. Add env-driven telephony provider selection between Exotel and Twilio, keeping Exotel working while adding Twilio outbound, inbound, status callback, and media/WebSocket support.
-4. Fix Exotel status callback auth and live audio sample-rate mismatch.
-5. Add missing global CSS tokens and real dark theme variable mappings.
-6. Add Supabase migrations/schema docs for all inferred tables, storage buckets, RPCs, and RLS.
-7. Add smoke tests for auth, campaign launch, telephony webhooks, voice preview, KB upload/query, and status callbacks.
+Architecture
+Frontend/framework: Next.js 16, React 19, App Router, JavaScript-only. Pages/routes under app/_.
+Backend/services: Next route handlers under app/api/_; Railway Node service under telephony-server/src/_.
+Database: Supabase Postgres inferred from .from() usage; no migrations/schema files found.
+Deployment: Next app on Vercel (vercel.json); telephony server on Railway via telephony-server/Dockerfile and railway.toml.
+State management: SWR-style server data in pages; persisted Zustand UI store in store/ui.js (tofabza-ui localStorage).
+Authentication: Supabase Auth. proxy.js protects most paths, rate-limits login/API via optional Upstash, and hardcodes ALLOWED_EMAIL = tonyeappen@tofabza.com. lib/auth/requireOperator.js uses OPERATOR_EMAIL.
+Major Modules
+Dashboard shell/UI: app/dashboard/layout.js, components/layout/Sidebar.js, app/globals.css, store/ui.js.
+Auth/login/middleware: app/login/page.js, proxy.js, lib/auth/requireOperator.js, lib/supabase/_.
+Clients: app/dashboard/clients/_, app/api/clients/[id]/delete-data/route.js.
+Agents/onboarding: app/dashboard/agents/_, app/dashboard/onboarding/_, app/onboard/[agent_id]/page.js, app/api/onboard/[agent_id]/_.
+Campaigns/contacts: app/dashboard/campaigns/_, app/api/campaigns/[id]/contacts/route.js, app/api/campaigns/[id]/launch/route.js, app/api/cron/campaigns/route.js.
+Telephony provider abstraction: lib/telephony/index.js, lib/telephony/types.js, lib/telephony/providers/_.
+Webhooks: app/api/webhooks/exotel/_, app/api/webhooks/twilio/[agent_id]/route.js.
+Live telephony service: telephony-server/src/index.js, websocket/callHandler.js, websocket/callHandlerTwilio.js, voice/provider.js, pipeline/llm.js.
+RAG/KB: lib/rag/_, lib/gemini/embeddings.js, app/api/kb/_, app/api/rag/query/route.js.
+Settings/secrets: lib/settings.js, app/api/settings/route.js, lib/encryption/index.js.
+Logging/costs/email: lib/logger.js, app/api/logs/route.js, lib/costs/pricing.js, lib/email/client.js.
+Core Data Model
+clients: parent for agents, campaigns, call logs, KBs.
+agents: belongs to clients; fields used include id, client_id, name, type, status, language, config. config stores prompt/greeting/voice/fallback/LLM/runtime options.
+campaigns: client_id, agent_id, status, scheduled_at, config; cron launches due scheduled rows.
+contacts: campaign contacts; campaign_id, phone, name, status, call_sid, called_at.
+call_logs: call lifecycle; call_sid, agent_id, client_id, campaign_id, caller_number, direction, status, duration_seconds, total_cost_inr, transcript, timestamps.
+knowledge_bases: KB metadata; active owner pattern is owner_type="agent", owner_id=agents.id.
+kb_chunks: content chunks with embeddings; queried through RPC match_chunks.
+settings: key, value, is_sensitive; sensitive values encrypted as iv:tag:ciphertext.
+api_keys: name, key_hash, key_prefix, last_used; raw keys are returned once only.
+onboarding_submissions, prompt_templates, voices, debug_logs, debug_logs_retention_summary.
+Storage buckets inferred: onboarding-files.
+Runtime Flows
+Auth: proxy.js skips public /login and /api/webhooks/_, checks Supabase session, enforces hardcoded email, attaches CSP/security headers. API routes often also call requireOperator().
+Campaign launch: POST /api/campaigns/[id]/launch loads campaign + pending contacts, marks campaign running, calls telephony.initiateCall, inserts call_logs, updates contact call_sid, throttles 1 call/2s, then marks campaign completed.
+Scheduled campaigns: GET /api/cron/campaigns with Authorization: Bearer CRON_SECRET finds due campaigns and POSTs internally to launch route with x-internal-secret.
+Exotel inbound: POST /api/webhooks/exotel/[agent_id] validates active agent and returns JSON WSS config to Railway /ws/call?agent_id=....
+Twilio inbound: POST /api/webhooks/twilio/[agent_id] returns TwiML <Connect><Stream> to Railway /ws/twilio, passing agent_id.
+Live call: Railway loads active agent, plays greeting, buffers audio, VAD triggers on silence, STT via Sarvam/Google, fetches RAG context from Next /api/rag/query, calls Gemini, TTS via Sarvam/Google, streams audio back, updates call_logs.
+KB upload/query: upload extracts PDF/TXT/MD/DOCX text, chunks, embeds via Gemini, inserts knowledge_bases/kb_chunks; query uses RPC match_chunks.
+Integrations
+Supabase: DB/Auth/Storage; NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, Railway uses SUPABASE_URL.
+Exotel: outbound/inbound/status/AgentStream; EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SUBDOMAIN, EXOTEL_EXOPHONE.
+Twilio: partial outbound/inbound/media support; TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.
+Sarvam: STT/TTS/voices; SARVAM_API_KEY, optional base URL/timeouts/defaults.
+Google Cloud: STT/TTS via service account in live service; preview helpers under lib/google/_.
+Gemini: chat + embeddings; GEMINI_API_KEY, model defaults.
+Upstash: optional proxy rate limits.
+Resend: operator emails.
+Sentry: configured in instrumentation_ and sentry.\*.config.js.
+Important Configuration
+TELEPHONY_PROVIDER, VOICE_PROVIDER, RAILWAY_WS_URL, NEXTJS_URL, NEXT_PUBLIC_APP_URL, INTERNAL_API_SECRET, CRON_SECRET, SETTINGS_ENCRYPTION_KEY, MAX_CALL_DURATION_S, OPERATOR_EMAIL, UPSTASH_REDIS_REST_URL/TOKEN, RESEND_API_KEY, RESEND_FROM_ADDRESS.

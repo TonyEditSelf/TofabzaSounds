@@ -214,44 +214,51 @@ export async function createStreamingTts({
     const client = new textToSpeech.v1.TextToSpeechClient({
       credentials: googleCredentials(),
     });
-    const stream = await client.streamingSynthesize();
-    let closed = false;
-    stream.on("data", (data) => {
-      if (data.audioContent?.length) {
-        onMulawAudio?.(linear16ToMulaw(Buffer.from(data.audioContent), 24000));
-      }
-    });
-    stream.on("end", () => {
-      closed = true;
-      onDone?.();
-    });
-    stream.on("close", () => {
-      closed = true;
-    });
-    stream.on("error", (err) => {
-      closed = true;
-      onError?.(err);
-    });
     const streamingVoice = resolveGoogleStreamingVoice(languageCode, voiceId);
     console.log(`[google/tts/stream] voice=${streamingVoice}`);
-    stream.write({
-      streamingConfig: {
-        voice: {
-          languageCode,
-          name: streamingVoice,
-        },
-        streamingAudioConfig: {
-          audioEncoding: "PCM",
-          sampleRateHertz: 24000,
-        },
-      },
-    });
+
+    let stream = null;
+    let closed = false;
+    let configSent = false;
+
+    function openStream() {
+      if (stream) return stream;
+      stream = client.streamingSynthesize();
+      stream.on("data", (data) => {
+        if (data.audioContent?.length) {
+          onMulawAudio?.(linear16ToMulaw(Buffer.from(data.audioContent), 24000));
+        }
+      });
+      stream.on("end", () => {
+        closed = true;
+        onDone?.();
+      });
+      stream.on("close", () => {
+        closed = true;
+      });
+      stream.on("error", (err) => {
+        closed = true;
+        onError?.(err);
+      });
+      return stream;
+    }
 
     return {
       sendText: (text) => {
-        if (closed || stream.destroyed) return false;
+        if (closed) return false;
         try {
-          stream.write({ input: { text } });
+          const s = openStream();
+          if (s.destroyed) { closed = true; return false; }
+          if (!configSent) {
+            configSent = true;
+            s.write({
+              streamingConfig: {
+                voice: { languageCode, name: streamingVoice },
+                streamingAudioConfig: { audioEncoding: "PCM", sampleRateHertz: 24000 },
+              },
+            });
+          }
+          s.write({ input: { text } });
           return true;
         } catch (err) {
           closed = true;
@@ -260,12 +267,12 @@ export async function createStreamingTts({
         }
       },
       flush: () => {
-        if (!closed && !stream.destroyed) stream.end();
+        if (stream && !closed && !stream.destroyed) stream.end();
       },
-      isClosed: () => closed || stream.destroyed,
+      isClosed: () => closed || (stream ? stream.destroyed : false),
       close: () => {
         closed = true;
-        stream.destroy();
+        stream?.destroy();
       },
     };
   }
