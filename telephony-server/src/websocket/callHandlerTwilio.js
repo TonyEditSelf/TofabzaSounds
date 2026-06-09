@@ -136,6 +136,8 @@ export function handleCall(ws, req) {
   let streamingFallbackTimer = null;
   let streamingFallbackGeneration = 0;
   let voiceProvider = getVoiceProvider();
+  let prewarmedTtsStream = null; // Fix 4: pre-connected TTS stream for first reply
+  let pendingUserTranscript = null; // Fix 5: queue transcript when isProcessing
 
   console.log(
     `[twilio] New connection agentId=${agentId} voiceProvider=${voiceProvider}` +
@@ -183,7 +185,7 @@ export function handleCall(ws, req) {
       },
       onFinalTranscript: async (text, lang) => {
         const transcript = text?.trim();
-        if (!transcript || isProcessing || !agent) return;
+        if (!transcript || !agent) return;
         const nextLang = lang ? normalizeLanguageCode(lang) : latestStreamingLanguage;
         if (nextLang && nextLang !== detectedLang) {
           detectedLang = nextLang;
@@ -195,7 +197,20 @@ export function handleCall(ws, req) {
         if (streamingFallbackTimer) clearTimeout(streamingFallbackTimer);
         streamingFallbackTimer = null;
         console.log(`[twilio/stt/final] "${transcript}"`);
+        // Fix 5: Queue instead of drop when bot is processing
+        if (isProcessing) {
+          pendingUserTranscript = transcript;
+          console.log(`[twilio/stt] queued transcript (bot busy): "${transcript.slice(0, 60)}"`);
+          return;
+        }
         await runReplyPipeline(transcript);
+      },
+      onVadSignal: (signal) => {
+        // Fix 3: Use Sarvam server-side VAD for barge-in
+        if (signal === "START_SPEECH" && isBotSpeaking) {
+          console.log("[twilio/stt/vad] START_SPEECH during bot audio → barge-in");
+          sendClear();
+        }
       },
       onError: (err) => {
         console.error("[twilio/stt/stream] ERROR:", err?.message);
@@ -460,6 +475,12 @@ export function handleCall(ws, req) {
           return ttsStream;
         if (ttsStreamFailed) return null;
         try {
+          // Fix 4: If a pre-warmed stream is open, close it so the fresh
+          // connection below benefits from a warmed route (DNS/TCP cached).
+          if (prewarmedTtsStream) {
+            try { prewarmedTtsStream.close(); } catch (_) {}
+            prewarmedTtsStream = null;
+          }
           ttsStream = await createStreamingTts({
             provider: voiceProvider,
             languageCode: activeLang,
@@ -631,7 +652,18 @@ export function handleCall(ws, req) {
       console.log(`[twilio/pipeline] reply done in ${Date.now() - t0}ms`);
     } finally {
       if (activeReplyAbort === replyAbort) activeReplyAbort = null;
-      if (manageProcessing) isProcessing = false;
+      if (manageProcessing) {
+        isProcessing = false;
+        // Fix 5: Process any transcript that arrived while we were busy
+        if (pendingUserTranscript) {
+          const queued = pendingUserTranscript;
+          pendingUserTranscript = null;
+          console.log(`[twilio] processing queued transcript: "${queued.slice(0, 60)}"`);
+          runReplyPipeline(queued).catch((err) =>
+            console.error("[twilio] queued transcript pipeline error:", err?.message),
+          );
+        }
+      }
     }
   }
 
@@ -749,9 +781,35 @@ export function handleCall(ws, req) {
           });
         }, MAX_CALL_DURATION_MS);
 
-        runReplyPipeline("", true, true).catch((err) => {
-          console.error("[twilio] initial reply error:", err?.message);
-        });
+        runReplyPipeline("", true, true)
+          .then(() => {
+            // Fix 4: Pre-warm TTS WS so first user reply pays no connection cost
+            if (STREAMING_PIPELINE && STREAMING_TTS && !prewarmedTtsStream) {
+              const primaryLang = normalizeLanguageCode(agent.language ?? lang);
+              createStreamingTts({
+                provider: voiceProvider,
+                languageCode: primaryLang,
+                voiceId: resolveVoiceId({
+                  languageCode: primaryLang,
+                  agentConfig: agent.config,
+                  voiceProvider,
+                }),
+                pace: agent.config?.pace ?? 1.0,
+                onMulawAudio: () => {},
+                onDone: () => {},
+                onError: (err) =>
+                  console.warn("[twilio/tts/prewarm] error:", err?.message),
+              })
+                .then((stream) => {
+                  prewarmedTtsStream = stream;
+                  console.log("[twilio/tts/prewarm] TTS WS pre-warmed");
+                })
+                .catch(() => {});
+            }
+          })
+          .catch((err) => {
+            console.error("[twilio] initial reply error:", err?.message);
+          });
         break;
       }
 
@@ -878,6 +936,10 @@ export function handleCall(ws, req) {
     if (botAudioTimer) clearTimeout(botAudioTimer);
     streamingStt?.close();
     streamingStt = null;
+    if (prewarmedTtsStream) {
+      try { prewarmedTtsStream.close(); } catch (_) {}
+      prewarmedTtsStream = null;
+    }
     const duration = Math.floor((Date.now() - callStart) / 1000);
     await updateCallLog(supabase, callLogId, {
       status: reason === "callended" ? "completed" : reason,

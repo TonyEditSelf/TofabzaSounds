@@ -99,12 +99,35 @@ function linear16ToMulaw(pcm, sampleRate = 8000) {
   return out;
 }
 
-function openWs(url, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, { headers });
-    socket.once("open", () => resolve(socket));
-    socket.once("error", reject);
-  });
+async function openWs(url, headers = {}, maxRetries = 3) {
+  let delay = 200;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const socket = new WebSocket(url, { headers });
+        const timeout = setTimeout(() => {
+          socket.terminate();
+          reject(new Error("WS open timeout"));
+        }, 5000);
+        socket.once("open", () => {
+          clearTimeout(timeout);
+          resolve(socket);
+        });
+        socket.once("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+      });
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      console.warn(
+        `[ws] connect attempt ${attempt + 1} failed, retrying in ${delay}ms:`,
+        err?.message,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 2000);
+    }
+  }
 }
 
 function sendJson(socket, payload, onError) {
@@ -133,6 +156,7 @@ export async function createStreamingStt({
   languageCode,
   onFinalTranscript,
   onInterimTranscript,
+  onVadSignal,
   onError,
 }) {
   const language = normalizeLanguageCode(languageCode);
@@ -214,11 +238,37 @@ export async function createStreamingStt({
       { "Api-Subscription-Key": SARVAM_API_KEY },
     );
 
+    // Fix 1+6: Keepalive — Sarvam closes idle WS during long bot-speaking periods
+    const sttPingInterval = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.ping();
+      } else {
+        clearInterval(sttPingInterval);
+      }
+    }, 15_000);
+    socket.on("close", () => clearInterval(sttPingInterval));
+    socket.on("error", () => clearInterval(sttPingInterval));
+
     socket.on("message", (raw) => {
       let msg;
       try {
         msg = JSON.parse(raw.toString());
       } catch (_) {
+        return;
+      }
+      const type = String(msg?.type ?? "").toLowerCase();
+      // Fix 3: Consume Sarvam VAD signals
+      const eventType = msg?.data?.event_type ?? msg?.event_type ?? "";
+      if (eventType === "START_SPEECH") {
+        onVadSignal?.("START_SPEECH");
+        return;
+      }
+      if (eventType === "END_SPEECH") {
+        onVadSignal?.("END_SPEECH");
+        return;
+      }
+      if (type === "error" || msg?.error) {
+        onError?.(new Error(msg?.error?.message ?? msg?.message ?? "Sarvam STT error"));
         return;
       }
       const transcript =
@@ -233,11 +283,6 @@ export async function createStreamingStt({
         msg?.language_code ??
         msg?.languageCode ??
         null;
-      const type = String(msg?.type ?? "").toLowerCase();
-      if (type === "error" || msg?.error) {
-        onError?.(new Error(msg?.error?.message ?? msg?.message ?? "Sarvam STT error"));
-        return;
-      }
       if (transcript.trim()) {
         onFinalTranscript?.(
           transcript,
@@ -266,7 +311,10 @@ export async function createStreamingStt({
         sendJson(socket, { type: "flush" }, onError);
       },
       isClosed: () => socket.readyState !== WebSocket.OPEN,
-      close: () => socket.close(),
+      close: () => {
+        clearInterval(sttPingInterval);
+        socket.close();
+      },
     };
   }
 
@@ -366,6 +414,18 @@ export async function createStreamingTts({
       `wss://api.sarvam.ai/text-to-speech/ws?${params.toString()}`,
       { "Api-Subscription-Key": SARVAM_API_KEY },
     );
+
+    // Fix 1: Keepalive — Sarvam closes idle TTS WS during long LLM response gaps
+    const ttsPingInterval = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.ping();
+      } else {
+        clearInterval(ttsPingInterval);
+      }
+    }, 15_000);
+    socket.on("close", () => clearInterval(ttsPingInterval));
+    socket.on("error", () => clearInterval(ttsPingInterval));
+
     let doneResolved = false;
     let doneResolver = null;
     let doneTimer = null;
@@ -428,7 +488,10 @@ export async function createStreamingTts({
         return waitForDone();
       },
       isClosed: () => socket.readyState !== WebSocket.OPEN,
-      close: () => socket.close(),
+      close: () => {
+        clearInterval(ttsPingInterval);
+        socket.close();
+      },
     };
   }
 
