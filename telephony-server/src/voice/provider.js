@@ -2,6 +2,10 @@
  * telephony-server/src/voice/provider.js
  *
  * Self-contained STT/TTS provider for Railway telephony server.
+/**
+ * telephony-server/src/voice/provider.js
+ *
+ * Self-contained STT/TTS provider for Railway telephony server.
  * No Next.js dependencies (no server-only, no lib/settings.js).
  * Reads config directly from process.env.
  *
@@ -11,6 +15,7 @@
 import axios from "axios";
 import FormData from "form-data";
 import crypto from "crypto";
+import { Logger } from "../lib/logger.js";
 
 // ── Config from env ───────────────────────────────────────────────────────────
 
@@ -82,7 +87,8 @@ const LANGUAGE_CODES = [
   "gu-IN",
   "mr-IN",
   "pa-IN",
-  "od-IN",
+  "od-IN", // Sarvam uses od-IN for Odia
+  "or-IN", // Google uses or-IN for Odia (ISO 639-1 = or)
   "en-IN",
 ];
 const LANGUAGE_CODE_MAP = new Map(
@@ -136,6 +142,10 @@ const GOOGLE_VOICES_BY_LANGUAGE = {
     "gu-IN-Wavenet-D",
   ],
   "mr-IN": ["mr-IN-Wavenet-A", "mr-IN-Wavenet-B", "mr-IN-Wavenet-C"],
+  // Punjabi — Google Standard voices (no Wavenet/Neural2 for pa-IN)
+  "pa-IN": ["pa-IN-Standard-A", "pa-IN-Standard-B", "pa-IN-Standard-C", "pa-IN-Standard-D"],
+  // Odia — Google uses or-IN (ISO 639-1 code). od-IN is Sarvam-specific.
+  "or-IN": ["or-IN-Standard-A", "or-IN-Standard-B"],
 };
 const GOOGLE_DEFAULT_VOICE_BY_LANGUAGE = {
   "ml-IN": "ml-IN-Wavenet-B",
@@ -147,7 +157,14 @@ const GOOGLE_DEFAULT_VOICE_BY_LANGUAGE = {
   "bn-IN": "bn-IN-Wavenet-B",
   "gu-IN": "gu-IN-Wavenet-B",
   "mr-IN": "mr-IN-Wavenet-B",
+  "pa-IN": "pa-IN-Standard-A",
+  "or-IN": "or-IN-Standard-A",
 };
+
+// When calling Google APIs, od-IN (Sarvam) must be mapped to or-IN
+export function toGoogleLanguageCode(lang) {
+  return lang === "od-IN" ? "or-IN" : lang;
+}
 
 // Google
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -387,11 +404,12 @@ async function googleTTS({
   audioEncoding = "LINEAR16",
   sampleRateHertz = 16000,
 }) {
-  console.log(`[googleTTS] Calling Google TTS API with voice: ${voiceName}`);
+  const googleLang = toGoogleLanguageCode(languageCode);
+  console.log(`[googleTTS] voice: ${voiceName} lang: ${googleLang}`);
   const token = await getGoogleAccessToken();
   const body = {
     input: { text },
-    voice: { languageCode, name: voiceName },
+    voice: { languageCode: googleLang, name: voiceName },
     audioConfig: {
       audioEncoding,
       sampleRateHertz,
@@ -442,7 +460,7 @@ async function googleSTT({
   const config = {
     encoding,
     sampleRateHertz,
-    languageCode,
+    languageCode: toGoogleLanguageCode(languageCode), // od-IN → or-IN for Google
     enableAutomaticPunctuation: true,
   };
   if (model) config.model = model;
@@ -491,8 +509,12 @@ export async function tts({
     voiceProvider: provider,
   });
 
+  const t0 = Date.now();
+  Logger.log(`TTS:${provider.toUpperCase()}`, `Starting TTS request, textLength=${text?.length} language=${language}`);
+
+  let buf;
   if (provider === "google") {
-    return googleTTS({
+    buf = await googleTTS({
       text,
       languageCode: language,
       voiceName: resolvedVoice,
@@ -500,16 +522,27 @@ export async function tts({
       audioEncoding: audioEncoding ?? "LINEAR16",
       sampleRateHertz: sampleRate,
     });
+    // Google TTS always wraps MULAW (and LINEAR16) in a WAV container.
+    // Twilio expects raw mulaw samples — strip the WAV header.
+    if (audioEncoding === "MULAW") {
+      const dataIdx = buf.subarray(0, 200).indexOf(Buffer.from("data"));
+      if (dataIdx >= 0) buf = buf.subarray(dataIdx + 8);
+    }
+  } else {
+    buf = await sarvamTTS({
+      text,
+      languageCode: language,
+      speaker: resolveSarvamSpeaker(resolvedVoice),
+      pace,
+      speechSampleRate: sampleRate,
+      outputAudioCodec: audioEncoding === "MULAW" ? "mulaw" : undefined,
+    });
   }
 
-  return sarvamTTS({
-    text,
-    languageCode: language,
-    speaker: resolveSarvamSpeaker(resolvedVoice),
-    pace,
-    speechSampleRate: sampleRate,
-    outputAudioCodec: audioEncoding === "MULAW" ? "mulaw" : undefined,
-  });
+  const latency = Date.now() - t0;
+  Logger.trackLatency("tts", latency);
+  Logger.log(`TTS:${provider.toUpperCase()}`, `TTS completed in ${latency}ms, size=${buf.length} bytes`);
+  return buf;
 }
 
 export async function stt({
@@ -527,17 +560,28 @@ export async function stt({
   );
   const language = normalizeLanguageCode(languageCode);
 
+  const t0 = Date.now();
+  Logger.log(`STT:${provider.toUpperCase()}`, `Starting STT request, bufferSize=${audioBuffer?.length}`);
+  
+  let transcript = "";
   if (provider === "google") {
-    return googleSTT({
+    transcript = await googleSTT({
       audioBuffer,
       languageCode: language,
       encoding,
       sampleRateHertz,
       model,
     });
+  } else {
+    transcript = await sarvamSTT({ audioBuffer, languageCode: language, mimeType });
   }
 
-  return sarvamSTT({ audioBuffer, languageCode: language, mimeType });
+  const latency = Date.now() - t0;
+  Logger.trackLatency("stt", latency);
+  Logger.log(`STT:${provider.toUpperCase()}`, `STT completed in ${latency}ms`);
+  const ctx = Logger.context;
+  if (ctx) Logger.setState({ lastStt: transcript });
+  return transcript;
 }
 
 export function getVoiceProvider(agentConfig) {

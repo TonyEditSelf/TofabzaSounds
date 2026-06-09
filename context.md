@@ -43,15 +43,15 @@ Campaign launch: POST /api/campaigns/[id]/launch loads campaign + pending contac
 Scheduled campaigns: GET /api/cron/campaigns with Authorization: Bearer CRON_SECRET finds due campaigns and POSTs internally to launch route with x-internal-secret.
 Exotel inbound: POST /api/webhooks/exotel/[agent_id] validates active agent and returns JSON WSS config to Railway /ws/call?agent_id=....
 Twilio inbound: POST /api/webhooks/twilio/[agent_id] returns TwiML <Connect><Stream> to Railway /ws/twilio, passing agent_id.
-Live call: Railway loads active agent, plays greeting, buffers audio, VAD triggers on silence, STT via Sarvam/Google, fetches RAG context from Next /api/rag/query, calls Gemini, TTS via Sarvam/Google, streams audio back, updates call_logs.
-KB upload/query: upload extracts PDF/TXT/MD/DOCX text, chunks, embeds via Gemini, inserts knowledge_bases/kb_chunks; query uses RPC match_chunks.
+Live call: Railway loads active agent, plays greeting, buffers audio, VAD triggers on silence, STT via Sarvam/Google, fetches RAG context from Next /api/rag/query, calls Vertex AI Gemini, TTS via Sarvam/Google, streams audio back, updates call_logs.
+KB upload/query: upload extracts PDF/TXT/MD/DOCX text, chunks, embeds via Vertex AI Gemini, inserts knowledge_bases/kb_chunks; query uses RPC match_chunks.
 Integrations
 Supabase: DB/Auth/Storage; NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, Railway uses SUPABASE_URL.
 Exotel: outbound/inbound/status/AgentStream; EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SUBDOMAIN, EXOTEL_EXOPHONE.
 Twilio: partial outbound/inbound/media support; TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.
 Sarvam: STT/TTS/voices; SARVAM_API_KEY, optional base URL/timeouts/defaults.
 Google Cloud: STT/TTS via service account in live service; preview helpers under lib/google/_.
-Gemini: chat + embeddings; GEMINI_API_KEY, model defaults.
+Vertex AI Gemini: chat + embeddings; VERTEX_AI_PROJECT_ID, VERTEX_AI_LOCATION, service account credentials, model defaults.
 Upstash: optional proxy rate limits.
 Resend: operator emails.
 Sentry: configured in instrumentation_ and sentry.\*.config.js.

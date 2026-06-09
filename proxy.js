@@ -1,4 +1,4 @@
-﻿/**
+/**
  * proxy.js - Next.js 16 middleware (replaces middleware.js)
  *
  * Runs on the Node.js runtime (NOT Edge) so we can use full Node APIs
@@ -19,7 +19,7 @@ import { Redis } from "@upstash/redis";
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const ALLOWED_EMAIL = "tonyeappen@tofabza.com";
+const ALLOWED_EMAIL = process.env.OPERATOR_EMAIL || "tonyeappen@tofabza.com";
 
 /**
  * Paths that skip the session check entirely.

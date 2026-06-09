@@ -9,13 +9,14 @@ const ALGORITHM = "aes-256-gcm";
 // Keys that should be encrypted at rest
 const SENSITIVE_KEYS = [
   "sarvam_api_key",
-  "gemini_api_key",
+  "vertex_ai_service_account_json",
   "exotel_api_key",
   "exotel_api_token",
   "upstash_redis_url",
   "upstash_redis_token",
   "resend_api_key",
 ];
+const DEPRECATED_KEYS = new Set(["gemini_api_key"]);
 
 function encrypt(plaintext) {
   if (!ENCRYPTION_KEY) throw new Error("SETTINGS_ENCRYPTION_KEY not set");
@@ -63,6 +64,7 @@ export async function GET(request) {
 
   const settings = {};
   for (const row of data ?? []) {
+    if (DEPRECATED_KEYS.has(row.key)) continue;
     if (row.is_sensitive) {
       try {
         const decrypted = decrypt(row.value);
@@ -98,6 +100,7 @@ export async function POST(request) {
   const upserts = [];
 
   for (const [key, value] of Object.entries(body)) {
+    if (DEPRECATED_KEYS.has(key)) continue;
     if (value === null || value === undefined) continue;
     // Skip masked values (user didn't change them)
     if (typeof value === "string" && value.includes("••••")) continue;

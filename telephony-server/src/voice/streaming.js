@@ -2,11 +2,13 @@ import WebSocket from "ws";
 import speech from "@google-cloud/speech";
 import textToSpeech from "@google-cloud/text-to-speech";
 import { normalizeLanguageCode } from "./provider.js";
+import { Logger } from "../lib/logger.js";
+import { addWavHeader } from "../lib/audio.js";
 
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-const SARVAM_STT_SAMPLE_RATE =
-  Number.parseInt(process.env.SARVAM_STT_SAMPLE_RATE ?? "8000", 10) || 8000;
+const SARVAM_STT_SAMPLE_RATE = 8000;
+const SARVAM_STT_MESSAGE_ENCODING = "audio/wav"; // fixed C3 encoding
 const SARVAM_TTS_DONE_TIMEOUT_MS =
   Number.parseInt(process.env.SARVAM_TTS_DONE_TIMEOUT_MS ?? "3000", 10) ||
   3000;
@@ -143,6 +145,22 @@ function sendJson(socket, payload, onError) {
   }
 }
 
+function formatSarvamErrorMessage(msg) {
+  const detail =
+    msg?.error?.message ??
+    msg?.data?.error?.message ??
+    msg?.data?.message ??
+    msg?.message ??
+    msg?.error ??
+    msg?.data?.error;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  try {
+    return JSON.stringify(msg);
+  } catch (_) {
+    return "Sarvam STT error";
+  }
+}
+
 function resolveGoogleStreamingVoice(languageCode, voiceId) {
   const language = normalizeLanguageCode(languageCode);
   if (voiceId?.startsWith(`${language}-Chirp3-HD-`)) {
@@ -189,6 +207,12 @@ export async function createStreamingStt({
         onError?.(err);
       })
       .on("close", () => {
+        // Google STT streams have a hard 305-second limit.
+        // Trigger onError so callHandlerTwilio.js reconnection logic kicks in.
+        if (!closed) {
+          closed = true;
+          onError?.(new Error("Google STT stream closed (305s limit reached — reconnecting)"));
+        }
         closed = true;
       })
       .on("data", (data) => {
@@ -228,7 +252,7 @@ export async function createStreamingStt({
       model: process.env.SARVAM_STT_MODEL ?? "saaras:v3",
       mode: process.env.SARVAM_STT_MODE ?? "transcribe",
       sample_rate: String(SARVAM_STT_SAMPLE_RATE),
-      input_audio_codec: "pcm_s16le",
+      input_audio_codec: "audio/wav",
       high_vad_sensitivity: "true",
       vad_signals: "true",
       flush_signal: "true",
@@ -237,6 +261,7 @@ export async function createStreamingStt({
       `wss://api.sarvam.ai/speech-to-text/ws?${params.toString()}`,
       { "Api-Subscription-Key": SARVAM_API_KEY },
     );
+    let closedByClient = false;
 
     // Fix 1+6: Keepalive — Sarvam closes idle WS during long bot-speaking periods
     const sttPingInterval = setInterval(() => {
@@ -246,7 +271,12 @@ export async function createStreamingStt({
         clearInterval(sttPingInterval);
       }
     }, 15_000);
-    socket.on("close", () => clearInterval(sttPingInterval));
+    socket.on("close", (code, reason) => {
+      clearInterval(sttPingInterval);
+      if (closedByClient || code === 1000 || code === 1001) return;
+      const reasonText = reason?.toString?.() || "no close reason";
+      onError?.(new Error(`Sarvam STT closed ${code}: ${reasonText}`));
+    });
     socket.on("error", () => clearInterval(sttPingInterval));
 
     socket.on("message", (raw) => {
@@ -258,17 +288,27 @@ export async function createStreamingStt({
       }
       const type = String(msg?.type ?? "").toLowerCase();
       // Fix 3: Consume Sarvam VAD signals
-      const eventType = msg?.data?.event_type ?? msg?.event_type ?? "";
+      const eventType =
+        msg?.data?.signal_type ??
+        msg?.data?.event_type ??
+        msg?.signal_type ??
+        msg?.event_type ??
+        (type === "speech_start" ? "START_SPEECH" : "") ??
+        "";
       if (eventType === "START_SPEECH") {
         onVadSignal?.("START_SPEECH");
         return;
       }
-      if (eventType === "END_SPEECH") {
+      if (
+        eventType === "END_SPEECH" ||
+        eventType === "END_OF_SPEECH" ||
+        type === "speech_end"
+      ) {
         onVadSignal?.("END_SPEECH");
         return;
       }
       if (type === "error" || msg?.error) {
-        onError?.(new Error(msg?.error?.message ?? msg?.message ?? "Sarvam STT error"));
+        onError?.(new Error(formatSarvamErrorMessage(msg)));
         return;
       }
       const transcript =
@@ -295,13 +335,14 @@ export async function createStreamingStt({
     return {
       sendTwilioMulaw: (mulawBuf) => {
         const pcm = decodeMulaw(mulawBuf);
+        const wav = addWavHeader(pcm, SARVAM_STT_SAMPLE_RATE, 1);
         return sendJson(
           socket,
           {
             audio: {
-              data: pcm.toString("base64"),
+              data: wav.toString("base64"),
               sample_rate: SARVAM_STT_SAMPLE_RATE,
-              encoding: "pcm_s16le",
+              encoding: SARVAM_STT_MESSAGE_ENCODING,
             },
           },
           onError,
@@ -312,6 +353,7 @@ export async function createStreamingStt({
       },
       isClosed: () => socket.readyState !== WebSocket.OPEN,
       close: () => {
+        closedByClient = true;
         clearInterval(sttPingInterval);
         socket.close();
       },
@@ -334,16 +376,28 @@ export async function createStreamingTts({
   if (provider === "google") {
     const client = getTextToSpeechClient();
     const streamingVoice = resolveGoogleStreamingVoice(language, voiceId);
-    console.log(`[google/tts/stream] voice=${streamingVoice}`);
+    Logger.log("TTS:GOOGLE", `voice=${streamingVoice}`);
 
     let stream = null;
     let closed = false;
     let configSent = false;
 
+    let t0 = Date.now();
+    let firstByte = true;
+
     function openStream() {
       if (stream) return stream;
+      t0 = Date.now();
+      firstByte = true;
+      Logger.log("TTS:GOOGLE", "Opening streaming TTS socket");
       stream = client.streamingSynthesize();
       stream.on("data", (data) => {
+        if (firstByte) {
+          const ttfb = Date.now() - t0;
+          Logger.log("TTS:GOOGLE", `Streaming TTFB: ${ttfb}ms`);
+          Logger.trackLatency("tts", ttfb);
+          firstByte = false;
+        }
         if (data.audioContent?.length) {
           onMulawAudio?.(
             linear16ToMulaw(Buffer.from(data.audioContent), 24000),
@@ -359,6 +413,7 @@ export async function createStreamingTts({
       });
       stream.on("error", (err) => {
         closed = true;
+        Logger.error("TTS:GOOGLE", err?.message);
         onError?.(err);
       });
       return stream;
@@ -414,6 +469,10 @@ export async function createStreamingTts({
       `wss://api.sarvam.ai/text-to-speech/ws?${params.toString()}`,
       { "Api-Subscription-Key": SARVAM_API_KEY },
     );
+    Logger.log("TTS:SARVAM", `voice=${voiceId}`);
+
+    let t0 = Date.now();
+    let firstByte = true;
 
     // Fix 1: Keepalive — Sarvam closes idle TTS WS during long LLM response gaps
     const ttsPingInterval = setInterval(() => {
@@ -456,11 +515,22 @@ export async function createStreamingTts({
         return;
       }
       const audio = msg?.data?.audio ?? msg?.audio ?? msg?.data?.audio_base64;
-      if (audio) onMulawAudio?.(Buffer.from(audio, "base64"));
+      if (audio) {
+        if (firstByte) {
+          const ttfb = Date.now() - t0;
+          Logger.log("TTS:SARVAM", `Streaming TTFB: ${ttfb}ms`);
+          Logger.trackLatency("tts", ttfb);
+          firstByte = false;
+        }
+        onMulawAudio?.(Buffer.from(audio, "base64"));
+      }
       const eventType = msg?.data?.event_type ?? msg?.event_type;
       if (eventType === "final") resolveDone();
     });
-    socket.on("error", (err) => onError?.(err));
+    socket.on("error", (err) => {
+      Logger.error("TTS:SARVAM", err?.message);
+      onError?.(err);
+    });
     socket.on("close", resolveDone);
 
     sendJson(
@@ -481,6 +551,7 @@ export async function createStreamingTts({
 
     return {
       sendText: (text) => {
+        if (firstByte && text) t0 = Date.now(); // reset TTFB timer on first text sent
         return sendJson(socket, { type: "text", data: { text } }, onError);
       },
       flush: () => {

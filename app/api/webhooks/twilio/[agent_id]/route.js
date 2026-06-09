@@ -10,8 +10,10 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import logger from "@/lib/logger";
+import { createHmac } from "crypto";
 
 const RAILWAY_WS_URL = process.env.RAILWAY_WS_URL; // e.g. wss://tofabza-telephony.up.railway.app
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
 function toWebSocketBase(rawUrl) {
   const trimmed = (rawUrl || "").trim().replace(/\/$/, "");
@@ -30,8 +32,55 @@ function escapeXml(value) {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Validates the Twilio request signature (X-Twilio-Signature header).
+ * Twilio signs every webhook: HMAC-SHA1(authToken, url + sorted params).
+ * Returns true if valid, or if TWILIO_AUTH_TOKEN is not configured (dev mode).
+ */
+function validateTwilioSignature(signature, url, params) {
+  if (!TWILIO_AUTH_TOKEN) {
+    console.warn("[twilio webhook] TWILIO_AUTH_TOKEN not set — skipping signature validation");
+    return true;
+  }
+  if (!signature) return false;
+
+  // Build the string to sign: URL + sorted param key-value pairs
+  const sortedKeys = Object.keys(params).sort();
+  const toSign = url + sortedKeys.map((k) => `${k}${params[k]}`).join("");
+  const expected = createHmac("sha1", TWILIO_AUTH_TOKEN)
+    .update(toSign, "utf8")
+    .digest("base64");
+
+  // Constant-time compare to prevent timing attacks
+  if (expected.length !== signature.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 export async function POST(req, { params }) {
   const { agent_id } = await params;
+
+  // Read raw body first (needed for signature validation)
+  let rawBody = {};
+  let rawBodyText = "";
+  try {
+    rawBodyText = await req.text();
+    rawBody = Object.fromEntries(new URLSearchParams(rawBodyText));
+  } catch (_) {}
+
+  // Validate Twilio request signature — prevent spoofed webhook calls
+  const twilioSignature = req.headers.get("x-twilio-signature") ?? "";
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/twilio/${agent_id}`;
+  if (!validateTwilioSignature(twilioSignature, webhookUrl, rawBody)) {
+    console.warn("[twilio webhook] Invalid signature — rejecting request");
+    return new Response("<Response><Reject/></Response>", {
+      status: 403,
+      headers: { "Content-Type": "text/xml" },
+    });
+  }
 
   const supabase = await createAdminClient();
   const { data: agent, error } = await supabase
@@ -62,12 +111,6 @@ export async function POST(req, { params }) {
     );
   }
 
-  let rawBody = {};
-  try {
-    const text = await req.text();
-    rawBody = Object.fromEntries(new URLSearchParams(text));
-  } catch (_) {}
-
   const callSid = rawBody.CallSid || "";
   const from = rawBody.From || "";
 
@@ -78,15 +121,19 @@ export async function POST(req, { params }) {
     agentId: agent_id,
   });
 
-  // Convert wss:// Railway URL for the Stream target
-  // Twilio connects via wss; agent_id passed as stream parameter
-  const streamUrl = `${toWebSocketBase(RAILWAY_WS_URL)}/ws/twilio`;
+  // Build stream URL — include shared secret token if configured.
+  // TWILIO_WS_SECRET must also be set on the Railway telephony server.
+  const wsBase = toWebSocketBase(RAILWAY_WS_URL);
+  const wsSecret = process.env.TWILIO_WS_SECRET;
+  const streamUrl = wsSecret
+    ? `${wsBase}/ws/twilio?token=${encodeURIComponent(wsSecret)}`
+    : `${wsBase}/ws/twilio`;
 
   // TwiML: connect call to Media Stream
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-  <Stream url="${escapeXml(streamUrl)}">
+    <Stream url="${escapeXml(streamUrl)}">
       <Parameter name="agent_id" value="${escapeXml(agent_id)}" />
       <Parameter name="call_sid" value="${escapeXml(callSid)}" />
       <Parameter name="from" value="${escapeXml(from)}" />

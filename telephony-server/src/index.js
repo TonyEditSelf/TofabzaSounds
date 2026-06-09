@@ -1,4 +1,4 @@
-﻿/**
+/**
  * telephony-server/src/index.js
  *
  * Entry point - HTTP + WebSocket server on Railway.
@@ -37,6 +37,10 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true });
 
+// ── Concurrent call limiter ────────────────────────────────────────────────────
+const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "50", 10);
+let activeConnections = 0;
+
 server.on("upgrade", (req, socket, head) => {
   console.log("[upgrade] url:", req.url);
   wss.handleUpgrade(req, socket, head, (ws) => {
@@ -45,6 +49,15 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", (ws, req) => {
+  // Enforce concurrent call limit
+  if (activeConnections >= MAX_CONCURRENT_CALLS) {
+    console.warn(`[ws] Rejected connection — limit reached (${activeConnections}/${MAX_CONCURRENT_CALLS})`);
+    ws.close(1013, "Server at capacity");
+    return;
+  }
+  activeConnections++;
+  ws.once("close", () => { activeConnections--; });
+
   const url = req.url || "";
   const parsedUrl = new URL(url, "ws://localhost");
   console.log("[ws] incoming:", url);
@@ -55,6 +68,17 @@ wss.on("connection", (ws, req) => {
       parsedUrl.searchParams.get("provider") === "twilio")
   ) {
     console.log("[ws] route → TWILIO");
+    // Validate shared secret if configured (set TWILIO_WS_SECRET env var and
+    // include ?token=<secret> in the TwiML <Stream url="..."> attribute).
+    const twilioSecret = process.env.TWILIO_WS_SECRET;
+    if (twilioSecret) {
+      const token = parsedUrl.searchParams.get("token");
+      if (token !== twilioSecret) {
+        console.warn("[ws] Twilio auth failed — invalid token");
+        ws.close(1008, "Unauthorised");
+        return;
+      }
+    }
     return handleCallTwilio(ws, req);
   }
 
@@ -93,6 +117,7 @@ server.listen(PORT, () => {
   console.log(`[server] Twilio WS: ws://localhost:${PORT}/ws/twilio`);
 });
 
+
 // Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("[server] SIGTERM - shutting down gracefully");
@@ -101,5 +126,5 @@ process.on("SIGTERM", () => {
 
 process.on("uncaughtException", (err) => {
   console.error("[server] Uncaught exception:", err);
-  // Don't crash - log and continue
+  process.exit(1); // Railway will restart the container
 });

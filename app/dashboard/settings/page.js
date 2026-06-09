@@ -18,8 +18,8 @@ const LANGUAGES = [
 ];
 
 const GEMINI_CHAT_MODELS = [
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
   "gemini-2.0-flash",
 ];
 const GEMINI_EMBEDDING_MODELS = [
@@ -190,18 +190,10 @@ export default function SettingsPage() {
         />
       </Section>
 
-      <Section title="Gemini" subtitle="LLM & embeddings" icon="✦">
-        <SecretField
-          label="API key"
-          value={form.gemini_api_key ?? ""}
-          revealed={revealed.gemini_api_key}
-          onToggle={() => toggleReveal("gemini_api_key")}
-          onChange={(v) => set("gemini_api_key", v)}
-          placeholder="AIzaSy…"
-        />
+      <Section title="Vertex AI" subtitle="Gemini via Google Cloud" icon="G">
         <SelectField
           label="Chat model"
-          value={form.gemini_chat_model ?? "gemini-1.5-flash"}
+          value={form.gemini_chat_model ?? "gemini-2.5-flash"}
           onChange={(v) => set("gemini_chat_model", v)}
           options={GEMINI_CHAT_MODELS.map((m) => ({ value: m, label: m }))}
         />

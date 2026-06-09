@@ -1,36 +1,56 @@
 /**
  * telephony-server/src/pipeline/llm.js
  *
- * LLM pipeline: RAG context fetch + Gemini reply.
+ * LLM pipeline: RAG context fetch + Vertex AI Gemini reply.
  * Provides both batch and streaming helpers for Twilio playback.
  */
 
 import axios from "axios";
 import crypto from "crypto";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase.js";
+import { Logger } from "../lib/logger.js";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const NEXTJS_URL = process.env.NEXTJS_URL;
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DIRECT_RAG =
   (process.env.TELEPHONY_DIRECT_RAG ?? "true").toLowerCase() !== "false";
+const VERTEX_AI_PROJECT_ID =
+  process.env.VERTEX_AI_PROJECT_ID ??
+  process.env.GOOGLE_CLOUD_PROJECT ??
+  process.env.GCLOUD_PROJECT ??
+  "durable-limiter-495601-f7";
+const VERTEX_AI_LOCATION =
+  process.env.VERTEX_AI_LOCATION ??
+  process.env.GOOGLE_CLOUD_LOCATION ??
+  "global";
+const VERTEX_AI_SERVICE_ACCOUNT_JSON =
+  process.env.VERTEX_AI_SERVICE_ACCOUNT_JSON ??
+  process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+const VERTEX_AI_API_BASE_URL =
+  process.env.VERTEX_AI_API_BASE_URL ??
+  defaultVertexApiBaseUrl(VERTEX_AI_LOCATION);
+const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const LLM_MODELS = {
-  "gemini-flash": process.env.GEMINI_FLASH_MODEL ?? "gemini-2.5-flash",
-  "gemini-pro": process.env.GEMINI_PRO_MODEL ?? "gemini-2.5-pro",
+  "gemini-flash":
+    process.env.VERTEX_GEMINI_FLASH_MODEL ??
+    process.env.GEMINI_FLASH_MODEL ??
+    "gemini-2.5-flash",
+  "gemini-pro":
+    process.env.VERTEX_GEMINI_PRO_MODEL ??
+    process.env.GEMINI_PRO_MODEL ??
+    "gemini-2.5-pro",
 };
 
 const DEFAULT_MODEL =
+  process.env.VERTEX_GEMINI_MODEL ??
   process.env.GEMINI_CHAT_MODEL ??
   process.env.GEMINI_MODEL ??
   LLM_MODELS["gemini-flash"];
-const RAG_URL =
-  NEXTJS_URL && `${NEXTJS_URL.replace(/\/$/, "")}/api/rag/query`;
+const RAG_URL = NEXTJS_URL && `${NEXTJS_URL.replace(/\/$/, "")}/api/rag/query`;
 const RAG_TIMEOUT_MS = Math.max(
   1000,
-  Number.parseInt(process.env.RAG_TIMEOUT_MS ?? "6000", 10) || 6000,
+  Number.parseInt(process.env.RAG_TIMEOUT_MS ?? "2000", 10) || 2000, // reduced from 6000ms
 );
 const RAG_TOP_K = Math.max(
   1,
@@ -42,19 +62,123 @@ const RAG_MATCH_THRESHOLD = Number.isFinite(
   ? Number.parseFloat(process.env.RAG_MATCH_THRESHOLD)
   : 0.35;
 const RAG_EMBEDDING_MODEL = (
-  process.env.GEMINI_EMBEDDING_MODEL ?? "gemini-embedding-001"
+  process.env.VERTEX_EMBEDDING_MODEL ??
+  process.env.GEMINI_EMBEDDING_MODEL ??
+  "gemini-embedding-001"
 ).replace(/^models\//, "");
 
-function geminiUrl(model) {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+let vertexTokenCache = null;
+let vertexCryptoKey = null;
+
+function defaultVertexApiBaseUrl(location) {
+  return location === "global"
+    ? "https://aiplatform.googleapis.com"
+    : `https://${location}-aiplatform.googleapis.com`;
 }
 
-function geminiStreamUrl(model) {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+function normalizeVertexModelName(model) {
+  return String(model ?? "")
+    .replace(/^models\//, "")
+    .replace(/^publishers\/google\/models\//, "");
 }
 
-function geminiEmbeddingUrl(model) {
-  return `https://generativelanguage.googleapis.com/v1/models/${model}:embedContent?key=${GEMINI_API_KEY}`;
+function vertexModelPath(model) {
+  const normalizedModel = normalizeVertexModelName(model);
+  return `projects/${VERTEX_AI_PROJECT_ID}/locations/${VERTEX_AI_LOCATION}/publishers/google/models/${normalizedModel}`;
+}
+
+function vertexUrl(model, method) {
+  return `${VERTEX_AI_API_BASE_URL}/v1/${vertexModelPath(model)}:${method}`;
+}
+
+function vertexStreamUrl(model) {
+  return `${vertexUrl(model, "streamGenerateContent")}?alt=sse`;
+}
+
+async function getVertexAccessToken() {
+  if (vertexTokenCache && vertexTokenCache.expiresAt > Date.now() + 60_000) {
+    return vertexTokenCache.token;
+  }
+
+  if (!VERTEX_AI_SERVICE_ACCOUNT_JSON) {
+    throw new Error(
+      "VERTEX_AI_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_JSON is required for Vertex AI",
+    );
+  }
+
+  const { private_key, client_email } = JSON.parse(
+    VERTEX_AI_SERVICE_ACCOUNT_JSON,
+  );
+  if (!private_key || !client_email) {
+    throw new Error(
+      "Vertex AI service account JSON is missing private_key or client_email",
+    );
+  }
+
+  const normalizedPrivateKey = private_key.replace(/\\n/g, "\n");
+  const now = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(
+    JSON.stringify({ alg: "RS256", typ: "JWT" }),
+  ).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      iss: client_email,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      aud: GOOGLE_OAUTH_TOKEN_URL,
+      iat: now,
+      exp: now + 3600,
+    }),
+  ).toString("base64url");
+  const unsigned = `${header}.${payload}`;
+
+  if (!vertexCryptoKey) {
+    const der = Buffer.from(
+      normalizedPrivateKey.replace(/-----[^-]+-----|\n/g, ""),
+      "base64",
+    );
+    vertexCryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      der,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  }
+
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    vertexCryptoKey,
+    new TextEncoder().encode(unsigned),
+  );
+  const jwt = `${unsigned}.${Buffer.from(sig).toString("base64url")}`;
+
+  const res = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token) {
+    throw new Error(
+      data?.error_description ??
+        data?.error ??
+        "Failed to get Vertex AI access token",
+    );
+  }
+
+  vertexTokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  };
+  return data.access_token;
+}
+
+async function vertexHeaders() {
+  const token = await getVertexAccessToken();
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
 }
 
 function resolveModelCandidates(config = {}) {
@@ -80,7 +204,9 @@ function sanitisePrompt(prompt = "") {
 function buildRagQuery(history = []) {
   return history
     .slice(-5)
-    .map((m) => `${m.role === "assistant" ? "Assistant" : "Caller"}: ${m.content}`)
+    .map(
+      (m) => `${m.role === "assistant" ? "Assistant" : "Caller"}: ${m.content}`,
+    )
     .join("\n")
     .slice(-1200);
 }
@@ -91,15 +217,7 @@ const RAG_CACHE_TTL = 30_000;
 const EMBEDDING_CACHE_TTL = 5 * 60_000;
 const CACHE_LIMIT = 200;
 
-let _supabase = null;
-function getSupabase() {
-  if (!_supabase && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-    _supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    });
-  }
-  return _supabase;
-}
+// Supabase singleton imported from ../lib/supabase.js — use supabase directly.
 
 function shortHash(value) {
   return crypto.createHash("sha1").update(value).digest("hex").slice(0, 16);
@@ -129,20 +247,20 @@ async function embedRagQuery(query) {
     return cached.embedding;
   }
 
-  const res = await fetch(geminiEmbeddingUrl(RAG_EMBEDDING_MODEL), {
+  const res = await fetch(vertexUrl(RAG_EMBEDDING_MODEL, "embedContent"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await vertexHeaders(),
     body: JSON.stringify({
-      model: `models/${RAG_EMBEDDING_MODEL}`,
       content: { parts: [{ text: query.slice(0, 8000) }] },
+      embedContentConfig: { taskType: "RETRIEVAL_QUERY" },
     }),
     signal: AbortSignal.timeout(RAG_TIMEOUT_MS),
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message ?? "Gemini embed failed");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message ?? "Vertex embed failed");
   const embedding = data.embedding?.values;
-  if (!embedding?.length) throw new Error("Gemini embed returned empty vector");
+  if (!embedding?.length) throw new Error("Vertex embed returned empty vector");
   setBoundedCache(_embeddingCache, key, { embedding, ts: Date.now() });
   return embedding;
 }
@@ -175,12 +293,12 @@ async function fetchLegacyDirectRagContext({
 }
 
 async function fetchDirectRagContext(agentId, query, config = {}) {
-  if (!DIRECT_RAG || !GEMINI_API_KEY) return null;
-  const supabase = getSupabase();
-  if (!supabase) return null;
+  if (!DIRECT_RAG) return null;
+  // Uses shared supabase singleton from ../lib/supabase.js
 
   const topK = normalizeTopK(config);
-  const threshold = Number.parseFloat(config?.rag_match_threshold) || RAG_MATCH_THRESHOLD;
+  const threshold =
+    Number.parseFloat(config?.rag_match_threshold) || RAG_MATCH_THRESHOLD;
   const embedding = await embedRagQuery(query);
 
   const { data: chunks, error } = await supabase.rpc("match_chunks_hybrid", {
@@ -215,7 +333,8 @@ async function fetchRagContext(agentId, query, config = {}) {
     const directCtx = await fetchDirectRagContext(agentId, query, config);
     if (directCtx !== null) {
       setBoundedCache(_ragCache, cacheKey, { ctx: directCtx, ts: Date.now() });
-      if (directCtx) console.log(`[rag] direct context chars=${directCtx.length}`);
+      if (directCtx)
+        console.log(`[rag] direct context chars=${directCtx.length}`);
       return directCtx;
     }
   } catch (err) {
@@ -305,14 +424,14 @@ async function buildGeminiPayload({
 
   return {
     payload: {
-      system_instruction: { parts: [{ text: systemPrompt }] },
+      systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [
         ...geminiHistory,
         { role: "user", parts: [{ text: lastMessage }] },
       ],
       generationConfig: {
-        maxOutputTokens: 220,
-        temperature: 0.55,
+        maxOutputTokens: config?.max_output_tokens ?? 350,
+        temperature: config?.temperature ?? 0.55,
       },
     },
   };
@@ -372,24 +491,33 @@ export async function getLLMReply({
 
   for (const modelName of resolveModelCandidates(config)) {
     try {
-      const res = await axios.post(geminiUrl(modelName), payload, {
-        timeout: 15000,
-      });
+      const res = await axios.post(
+        vertexUrl(modelName, "generateContent"),
+        payload,
+        {
+          headers: await vertexHeaders(),
+          timeout: 15000,
+        },
+      );
 
       const reply = res.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
       if (reply.trim()) {
-        console.log(`[llm] model=${modelName}`);
+        Logger.log(
+          "LLM",
+          `vertex model=${modelName} project=${VERTEX_AI_PROJECT_ID} location=${VERTEX_AI_LOCATION}`,
+        );
         return reply;
       }
-      console.warn(`[llm] Empty reply from model=${modelName}`);
+      Logger.warn("LLM", `Empty Vertex reply from model=${modelName}`);
     } catch (err) {
       const status = err?.response?.status;
       const message =
         err?.response?.data?.error?.message ??
         err?.response?.data ??
         err?.message;
-      console.error(
-        `[llm] ${modelName} failed:`,
+      Logger.error(
+        "LLM",
+        `Vertex ${modelName} failed:`,
         status ? `${status}:` : "",
         message,
       );
@@ -419,9 +547,9 @@ export async function streamLLMReply({
 
   for (const modelName of resolveModelCandidates(config)) {
     try {
-      const res = await fetch(geminiStreamUrl(modelName), {
+      const res = await fetch(vertexStreamUrl(modelName), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await vertexHeaders(),
         body: JSON.stringify(payload),
         signal,
       });
@@ -429,8 +557,9 @@ export async function streamLLMReply({
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const message = err?.error?.message ?? res.statusText;
-        console.error(
-          `[llm/stream] ${modelName} failed:`,
+        Logger.error(
+          "LLM",
+          `Vertex ${modelName} failed:`,
           `${res.status}:`,
           message,
         );
@@ -438,16 +567,27 @@ export async function streamLLMReply({
         continue;
       }
 
-      console.log(`[llm/stream] model=${modelName}`);
+      Logger.log(
+        "LLM",
+        `vertex model=${modelName} project=${VERTEX_AI_PROJECT_ID} location=${VERTEX_AI_LOCATION}`,
+      );
       let fullText = "";
+      const t0 = Date.now();
+      let firstToken = true;
       for await (const token of readGeminiSseText(res.body)) {
+        if (firstToken) {
+          const ttft = Date.now() - t0;
+          Logger.log("LLM", `Time-To-First-Token: ${ttft}ms`);
+          Logger.trackLatency("llm", ttft);
+          firstToken = false;
+        }
         fullText += token;
         await onToken?.(token, fullText);
       }
       return fullText.trim();
     } catch (err) {
       if (err?.name === "AbortError") throw err;
-      console.error(`[llm/stream] ${modelName} failed:`, err?.message);
+      Logger.error("LLM", `Vertex ${modelName} failed:`, err?.message);
     }
   }
 

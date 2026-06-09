@@ -12,7 +12,9 @@
  * @returns {Buffer} raw PCM
  */
 export function stripWavHeader(wavBuffer) {
-  const dataMarker = wavBuffer.indexOf(Buffer.from("data"));
+  // Only scan the first 200 bytes — WAV headers are at most 100 bytes.
+  // Scanning the whole buffer risks false-matching PCM data that contains 0x64617461.
+  const dataMarker = wavBuffer.subarray(0, 200).indexOf(Buffer.from("data"));
   if (dataMarker === -1) return wavBuffer; // assume already raw PCM
   // After "data": 4 bytes chunk size, then PCM starts
   return wavBuffer.subarray(dataMarker + 8);
@@ -50,4 +52,30 @@ export function upsample8kTo16k(pcm8k) {
     out.writeInt16LE(sample, i * 2 + 2);
   }
   return out;
+}
+
+/**
+ * Create a WAV file (with header) from a raw PCM s16le buffer.
+ */
+export function addWavHeader(pcmBuffer, sampleRate = 8000, numChannels = 1) {
+  const wavHeader = Buffer.alloc(44);
+  const totalDataLen = pcmBuffer.length;
+  const totalAudioLen = totalDataLen + 36;
+  const byteRate = sampleRate * numChannels * 2;
+
+  wavHeader.write("RIFF", 0);
+  wavHeader.writeUInt32LE(totalAudioLen, 4);
+  wavHeader.write("WAVE", 8);
+  wavHeader.write("fmt ", 12);
+  wavHeader.writeUInt32LE(16, 16); // Subchunk1Size
+  wavHeader.writeUInt16LE(1, 20); // AudioFormat (PCM)
+  wavHeader.writeUInt16LE(numChannels, 22);
+  wavHeader.writeUInt32LE(sampleRate, 24);
+  wavHeader.writeUInt32LE(byteRate, 28);
+  wavHeader.writeUInt16LE(numChannels * 2, 32); // BlockAlign
+  wavHeader.writeUInt16LE(16, 34); // BitsPerSample
+  wavHeader.write("data", 36);
+  wavHeader.writeUInt32LE(totalDataLen, 40);
+
+  return Buffer.concat([wavHeader, pcmBuffer]);
 }

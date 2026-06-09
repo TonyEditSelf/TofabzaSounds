@@ -107,7 +107,7 @@ export async function POST(request) {
     const { data: existing } = await db
       .from("call_logs")
       .select("id")
-      .eq("status", CallSid) // streamHandler temporarily stores CallSid in status
+      .eq("call_sid", CallSid)
       .maybeSingle();
 
     if (existing?.id) {
