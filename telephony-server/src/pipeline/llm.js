@@ -248,19 +248,19 @@ async function embedRagQuery(query) {
     return cached.embedding;
   }
 
-  const res = await fetch(vertexUrl(RAG_EMBEDDING_MODEL, "embedContent"), {
+  const res = await fetch(vertexUrl(RAG_EMBEDDING_MODEL, "predict"), {
     method: "POST",
     headers: await vertexHeaders(),
     body: JSON.stringify({
-      content: { parts: [{ text: query.slice(0, 8000) }] },
-      embedContentConfig: { taskType: "RETRIEVAL_QUERY", outputDimensionality: 768 },
+      instances: [{ content: query.slice(0, 8000), task_type: "RETRIEVAL_QUERY" }],
+      parameters: { outputDimensionality: 768 }
     }),
     signal: AbortSignal.timeout(RAG_TIMEOUT_MS),
   });
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error?.message ?? "Vertex embed failed");
-  const embedding = data.embedding?.values;
+  const embedding = data.predictions?.[0]?.embeddings?.values;
   if (!embedding?.length) throw new Error("Vertex embed returned empty vector");
   setBoundedCache(_embeddingCache, key, { embedding, ts: Date.now() });
   return embedding;
