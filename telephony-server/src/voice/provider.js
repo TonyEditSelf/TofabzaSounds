@@ -573,7 +573,7 @@ export async function stt({
       model,
     });
   } else {
-    transcript = await sarvamSTT({ audioBuffer, languageCode: language, mimeType });
+    transcript = await sarvamSTT({ audioBuffer, languageCode: "unknown", mimeType });
   }
 
   const latency = Date.now() - t0;

@@ -231,13 +231,14 @@ function setBoundedCache(cache, key, value) {
 }
 
 function normalizeTopK(config = {}) {
-  return Math.max(1, Number.parseInt(config?.rag_top_k ?? RAG_TOP_K, 10) || 3);
+  const k = Number.parseInt(config?.rag_top_k, 10);
+  return k && k >= 15 ? k : 15;
 }
 
 function formatRagContext(chunks = []) {
   if (!chunks?.length) return "";
   const context = chunks.map((c, i) => `[${i + 1}] ${c.content}`).join("\n\n");
-  return `\n\n--- Relevant Knowledge Base Context ---\n${context}\n--- End Context ---`;
+  return `\n\n--- Relevant Knowledge Base Context ---\n(You must use the following information to answer the user's questions if relevant. Do not hallucinate.)\n\n${context}\n--- End Context ---`;
 }
 
 async function embedRagQuery(query) {
@@ -252,7 +253,7 @@ async function embedRagQuery(query) {
     headers: await vertexHeaders(),
     body: JSON.stringify({
       content: { parts: [{ text: query.slice(0, 8000) }] },
-      embedContentConfig: { taskType: "RETRIEVAL_QUERY" },
+      embedContentConfig: { taskType: "RETRIEVAL_QUERY", outputDimensionality: 768 },
     }),
     signal: AbortSignal.timeout(RAG_TIMEOUT_MS),
   });
@@ -386,18 +387,6 @@ async function buildGeminiPayload({
   ragContext,
   initialTurn = false,
 }) {
-  const lastMessage =
-    initialTurn || !history.length
-      ? "Begin the call now. Greet the caller according to the agent instructions."
-      : (history[history.length - 1]?.content ?? "");
-  if (!initialTurn && ragContext === undefined) {
-    ragContext = await fetchRagContext(
-      agentId,
-      buildRagQuery(history) || lastMessage,
-      config,
-    );
-  }
-
   const langNames = {
     "ml-IN": "Malayalam",
     "hi-IN": "Hindi",
@@ -412,11 +401,23 @@ async function buildGeminiPayload({
     "od-IN": "Odia",
   };
   const langName = langNames[language] ?? "the caller's language";
-  const langPrompt =
-    `\n\nAlways respond in ${langName} only. ` +
-    "Keep responses concise. This is a phone call.";
 
-  const systemPrompt = sanitisePrompt(config?.prompt) + langPrompt + ragContext;
+  const lastMessage =
+    initialTurn || !history.length
+      ? `[EVENT: Call Connected. The caller expects you to speak in ${langName}.]`
+      : (history[history.length - 1]?.content ?? "");
+  if (!initialTurn && ragContext === undefined) {
+    ragContext = await fetchRagContext(
+      agentId,
+      buildRagQuery(history) || lastMessage,
+      config,
+    );
+  }
+
+  const langPrompt =
+    `[System: Default response language is ${langName}. Respond in ${langName} unless the caller speaks a different language.]\n\n`;
+
+  const systemPrompt = langPrompt + sanitisePrompt(config?.prompt) + "\n\nKeep responses concise. This is a phone call." + ragContext;
   const geminiHistory = history.slice(-20, -1).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],

@@ -248,7 +248,7 @@ export async function createStreamingStt({
   if (provider === "sarvam") {
     if (!SARVAM_API_KEY) throw new Error("SARVAM_API_KEY is not set");
     const params = new URLSearchParams({
-      "language-code": language,
+      "language-code": language || "unknown",
       model: process.env.SARVAM_STT_MODEL ?? "saaras:v3",
       mode: process.env.SARVAM_STT_MODE ?? "transcribe",
       sample_rate: String(SARVAM_STT_SAMPLE_RATE),
@@ -368,6 +368,7 @@ export async function createStreamingTts({
   languageCode,
   voiceId,
   pace = 1.0,
+  sampleRate = 8000,
   onMulawAudio,
   onDone,
   onError,
@@ -477,11 +478,11 @@ export async function createStreamingTts({
     // Fix 1: Keepalive — Sarvam closes idle TTS WS during long LLM response gaps
     const ttsPingInterval = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.ping();
+        sendJson(socket, { type: "ping" });
       } else {
         clearInterval(ttsPingInterval);
       }
-    }, 15_000);
+    }, 1_000);
     socket.on("close", () => clearInterval(ttsPingInterval));
     socket.on("error", () => clearInterval(ttsPingInterval));
 
@@ -544,6 +545,7 @@ export async function createStreamingTts({
           min_buffer_size: 35,
           max_chunk_length: 140,
           output_audio_codec: "mulaw",
+          speech_sample_rate: sampleRate,
         },
       },
       onError,

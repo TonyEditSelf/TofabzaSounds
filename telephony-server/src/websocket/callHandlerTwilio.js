@@ -39,7 +39,7 @@ const VAD_SILENCE_DURATION = intEnv("TWILIO_VAD_SILENCE_MS", 300);
 const MIN_UTTERANCE_MS = intEnv("TWILIO_MIN_UTTERANCE_MS", 240);
 const MAX_CALL_DURATION_MS =
   (parseInt(process.env.MAX_CALL_DURATION_S) || 600) * 1000;
-const BARGE_IN_THRESHOLD = intEnv("TWILIO_BARGE_IN_THRESHOLD", 300);
+const BARGE_IN_THRESHOLD = intEnv("TWILIO_BARGE_IN_THRESHOLD", 500);
 const TTS_MIN_CHARS = intEnv("TWILIO_TTS_MIN_CHARS", 20);
 const TTS_MAX_CHARS = intEnv("TWILIO_TTS_MAX_CHARS", 130);
 const TWILIO_FRAME_MS = 20;
@@ -519,12 +519,11 @@ export function handleCall(ws, req) {
         replyAbort = new AbortController();
         activeReplyAbort = replyAbort;
 
-        if (!initialTurn) history.push({ role: "user", content: transcript });
-
         let pendingText = "";
         let reply = "";
         let streamedReplyText = "";
         let sentAnyAudio = false;
+        let mainAudioStarted = false;
         let totalAudioBytes = 0;
         let ttsHandled = false;
         let ttsStream = null;
@@ -536,6 +535,7 @@ export function handleCall(ws, req) {
           const cleanBuf = stripWavHeader(mulawBuf);
           totalAudioBytes += cleanBuf.length;
           sentAnyAudio = true;
+          mainAudioStarted = true;
           streamAudioChunk(cleanBuf);
         }
 
@@ -658,6 +658,41 @@ export function handleCall(ws, req) {
             sendReplyAudio(mulawBuf);
           });
         };
+
+        if (!initialTurn) history.push({ role: "user", content: transcript });
+
+        // NOTE: Do NOT eagerly connect TTS here. Sarvam has a ~2-3s idle timeout
+        // after config is sent — if no text arrives, the server closes the WS.
+        // The stream will be created JIT in ensureTtsStream() when the first LLM
+        // text chunk is ready, ensuring text follows immediately after connection.
+
+        // Dynamically extract and play filler phrase from system prompt
+        if (!initialTurn && agent?.config?.prompt) {
+           const langMap = { "ml-IN": "Malayalam", "hi-IN": "Hindi", "ta-IN": "Tamil", "kn-IN": "Kannada", "te-IN": "Telugu", "mr-IN": "Marathi", "en-IN": "English" };
+           const activeLangName = langMap[activeLang] || "English";
+           const regex = new RegExp(`- ${activeLangName}: "(.*?)"`, "i");
+           const match = agent.config.prompt.match(regex);
+           if (match && match[1]) {
+             const fillerText = match[1];
+             tts({
+               text: fillerText,
+               languageCode: activeLang,
+               voiceId: activeVoiceId,
+               pace: agent.config?.pace ?? 1.0,
+               sampleRate: TWILIO_SAMPLE_RATE,
+               audioEncoding: "MULAW",
+               agentConfig: agent.config,
+               voiceProvider,
+             }).then(fillerBuf => {
+               if (generation === playbackGeneration && !replyAbort.signal.aborted && !mainAudioStarted && fillerBuf) {
+                 console.log(`[twilio/tts/filler] playing dynamic filler: "${fillerText}"`);
+                 const cleanBuf = stripWavHeader(fillerBuf);
+                 totalAudioBytes += cleanBuf.length;
+                 streamAudioChunk(cleanBuf);
+               }
+             }).catch(err => console.warn("[twilio/tts/filler] failed:", err?.message));
+           }
+        }
 
         try {
           reply = await streamLLMReply({

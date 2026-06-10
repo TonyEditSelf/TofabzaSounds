@@ -11,7 +11,7 @@ create index if not exists kb_chunks_search_vector_idx
   on public.kb_chunks using gin (search_vector);
 
 create index if not exists kb_chunks_embedding_hnsw_idx
-  on public.kb_chunks using hnsw (embedding vector_cosine_ops);
+  on public.kb_chunks using hnsw ((embedding::vector(768)) vector_cosine_ops);
 
 create index if not exists knowledge_bases_owner_idx
   on public.knowledge_bases (owner_type, owner_id, id);
