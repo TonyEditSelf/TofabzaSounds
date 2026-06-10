@@ -198,7 +198,7 @@ function resolveModelCandidates(config = {}) {
 }
 
 function sanitisePrompt(prompt = "") {
-  return prompt.replace(/<\|.*?\|>/g, "").slice(0, 8000);
+  return prompt.replace(/<\|[\s\S]*?\|>/g, "").slice(0, 8000);
 }
 
 function buildRagQuery(history = []) {
